@@ -7,6 +7,7 @@ from urllib.parse import urlparse, urlunparse
 import psycopg
 from psycopg import Connection, sql
 from psycopg.errors import DuplicateDatabase, InvalidCatalogName
+from psycopg.rows import dict_row
 
 from app.common.config import get_settings
 
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS tools (
 CREATE INDEX IF NOT EXISTS idx_tools_type ON tools(tool_type);
 CREATE INDEX IF NOT EXISTS idx_tools_status ON tools(status);
 CREATE INDEX IF NOT EXISTS idx_tools_risk ON tools(risk_level);
+CREATE INDEX IF NOT EXISTS idx_tools_tags_gin ON tools USING GIN (tags);
 
 CREATE TABLE IF NOT EXISTS tasks (
     id UUID PRIMARY KEY,
@@ -168,7 +170,9 @@ def _maintenance_database_url(database_url: str) -> tuple[str, str]:
 
 @contextmanager
 def get_connection() -> Iterator[Connection]:
-    connection = psycopg.connect(get_database_url(), connect_timeout=5)
+    connection = psycopg.connect(
+        get_database_url(), connect_timeout=5, row_factory=dict_row
+    )
     try:
         yield connection
         connection.commit()

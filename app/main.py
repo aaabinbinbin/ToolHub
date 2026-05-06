@@ -3,9 +3,12 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
+from app.api.tools import router as tools_router
 from app.common.config import configure_logging, get_settings
+from app.common.exceptions import ToolHubError
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,17 @@ app = FastAPI(
 )
 
 
+@app.exception_handler(ToolHubError)
+def handle_toolhub_error(request: Request, exc: ToolHubError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.message},
+    )
+
+
 @app.get("/health", tags=["system"])
 def health() -> dict[str, str]:
     return {"status": "OK"}
+
+
+app.include_router(tools_router)

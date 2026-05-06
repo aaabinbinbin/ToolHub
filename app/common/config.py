@@ -31,6 +31,7 @@ def load_env_file(path: Path = Path(".env")) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
+        # 系统环境变量优先；.env 只补充缺失项，避免覆盖部署环境配置。
         os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 

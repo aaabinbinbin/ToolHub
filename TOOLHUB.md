@@ -1,19 +1,19 @@
 # TOOLHUB.md
 
-## Project Background
+## 项目背景
 
-ToolHub is an Agent Harness platform for CLI and IDE agents. It manages MCP, HTTP, CLI, and Sandbox tools through a common runtime with routing, permissions, execution audit logs, and observability.
+ToolHub 是一个面向 CLI / IDE Agent 的 Agent Harness 平台。它通过统一运行时管理 MCP、HTTP、CLI 和 Sandbox 四类工具，并提供工具路由、权限控制、执行审计日志和可观测性能力。
 
-## Safety Rules
+## 安全规则
 
-- Do not delete host files.
-- Do not run destructive host commands.
-- Do not start arbitrary local processes from user input.
-- Prefer sandboxed execution for generated code and shell commands.
-- Treat high-risk tools as requiring explicit permission unless the run mode allows them.
+- 不允许删除宿主机文件。
+- 不允许执行破坏性宿主机命令。
+- 不允许根据用户输入直接启动任意本地进程。
+- 对 Agent 生成的代码和命令，优先使用沙箱执行。
+- 高风险工具默认需要明确权限控制，除非当前运行模式允许执行。
 
-## Execution Preferences
+## 执行偏好
 
-- Keep tool calls auditable with task events, tool calls, LLM calls, and sandbox execution records.
-- Use `PLAN_ONLY`, `SAFE_EXECUTE`, and `FULL_EXECUTE` run modes to decide how much execution is allowed.
-- Prefer clear JSON-like intermediate results for intent, routing, permission, and summary nodes.
+- 所有工具调用都应可审计，并记录 task_events、tool_calls、llm_calls 和 sandbox_executions。
+- 使用 `PLAN_ONLY`、`SAFE_EXECUTE`、`FULL_EXECUTE` 三种运行模式决定允许执行的程度。
+- 意图理解、工具路由、权限判断和结果总结等中间结果应尽量保持结构化，优先使用 JSON 格式。

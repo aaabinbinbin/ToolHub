@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.api.intent import router as intent_router
 from app.api.tools import router as tools_router
 from app.common.config import configure_logging, get_settings
 from app.common.exceptions import ToolHubError
@@ -43,3 +44,4 @@ def health() -> dict[str, str]:
 
 
 app.include_router(tools_router)
+app.include_router(intent_router)

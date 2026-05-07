@@ -20,6 +20,8 @@ class Settings:
     llm_base_url: str = "https://api.example.com/v1"
     llm_api_key: str = "your_api_key"
     llm_model: str = "your-model-name"
+    llm_timeout_seconds: float = 30
+    llm_max_retries: int = 2
 
 
 def load_env_file(path: Path = Path(".env")) -> None:
@@ -50,6 +52,10 @@ def get_settings() -> Settings:
         llm_base_url=os.getenv("LLM_BASE_URL", Settings.llm_base_url),
         llm_api_key=os.getenv("LLM_API_KEY", Settings.llm_api_key),
         llm_model=os.getenv("LLM_MODEL", Settings.llm_model),
+        llm_timeout_seconds=float(
+            os.getenv("LLM_TIMEOUT_SECONDS", Settings.llm_timeout_seconds)
+        ),
+        llm_max_retries=int(os.getenv("LLM_MAX_RETRIES", Settings.llm_max_retries)),
     )
 
 

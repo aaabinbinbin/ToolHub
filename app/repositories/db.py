@@ -8,6 +8,7 @@ import psycopg
 from psycopg import Connection, sql
 from psycopg.errors import DuplicateDatabase, InvalidCatalogName
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from app.common.config import get_settings
 
@@ -154,9 +155,37 @@ CREATE TABLE IF NOT EXISTS tool_permissions (
 );
 """
 
+_connection_pool: ConnectionPool | None = None
+
 
 def get_database_url() -> str:
     return get_settings().database_url
+
+
+def get_connection_pool() -> ConnectionPool:
+    """获取进程内 PostgreSQL 连接池。
+
+    Repository 层仍然使用短事务；连接池只负责复用底层连接，避免每条事件都重新建立 TCP 连接。
+    """
+    global _connection_pool
+    if _connection_pool is None:
+        settings = get_settings()
+        _connection_pool = ConnectionPool(
+            conninfo=settings.database_url,
+            min_size=settings.database_pool_min_size,
+            max_size=settings.database_pool_max_size,
+            kwargs={"connect_timeout": 5, "row_factory": dict_row},
+            open=True,
+        )
+    return _connection_pool
+
+
+def close_connection_pool() -> None:
+    """关闭当前进程的数据库连接池。"""
+    global _connection_pool
+    if _connection_pool is not None:
+        _connection_pool.close()
+        _connection_pool = None
 
 
 def _maintenance_database_url(database_url: str) -> tuple[str, str]:
@@ -170,17 +199,13 @@ def _maintenance_database_url(database_url: str) -> tuple[str, str]:
 
 @contextmanager
 def get_connection() -> Iterator[Connection]:
-    connection = psycopg.connect(
-        get_database_url(), connect_timeout=5, row_factory=dict_row
-    )
-    try:
-        yield connection
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
+    with get_connection_pool().connection() as connection:
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
 
 
 def ensure_database_exists() -> None:

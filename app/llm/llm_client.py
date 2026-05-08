@@ -343,8 +343,9 @@ class LLMClient:
 
     def _mock_intent_response(self, prompt: str) -> str:
         """根据 prompt 关键词生成 mock 意图识别结果。"""
-        lower_prompt = prompt.lower()
-        if "python" in lower_prompt or "print(" in lower_prompt:
+        user_input = self._extract_mock_user_input(prompt)
+        lower_user_input = user_input.lower()
+        if "python" in lower_user_input or "print(" in lower_user_input:
             intent = {
                 "intent": "RUN_CODE",
                 "summary": "用户想运行 Python 代码。",
@@ -353,7 +354,7 @@ class LLMClient:
                 "suggested_tool_type": "SANDBOX",
                 "tool_input": {"language": "python"},
             }
-        elif "git status" in lower_prompt or "git 状态" in lower_prompt:
+        elif "git status" in lower_user_input or "git 状态" in lower_user_input:
             intent = {
                 "intent": "CLI_EXECUTION",
                 "summary": "用户想查看 git 状态。",
@@ -362,7 +363,7 @@ class LLMClient:
                 "suggested_tool_type": "CLI",
                 "tool_input": {"command": "git status"},
             }
-        elif "http" in lower_prompt or "echo" in lower_prompt:
+        elif "http" in lower_user_input or "echo" in lower_user_input:
             intent = {
                 "intent": "HTTP_CALL",
                 "summary": "用户想调用 HTTP 工具。",
@@ -381,3 +382,14 @@ class LLMClient:
                 "tool_input": {},
             }
         return json.dumps(intent, ensure_ascii=False)
+
+    def _extract_mock_user_input(self, prompt: str) -> str:
+        """从 intent prompt 中提取用户输入，避免可用工具摘要影响 mock 判断。"""
+        marker = "用户输入："
+        if marker not in prompt:
+            return prompt
+        user_part = prompt.split(marker, 1)[1]
+        end_marker = "请只返回 JSON"
+        if end_marker in user_part:
+            user_part = user_part.split(end_marker, 1)[0]
+        return user_part.strip()

@@ -15,6 +15,8 @@ class Settings:
     port: int = 8000
     log_level: str = "INFO"
     database_url: str = "postgresql://postgres:postgres@localhost:15432/toolhub"
+    database_pool_min_size: int = 1
+    database_pool_max_size: int = 10
     redis_url: str = "redis://localhost:6379/0"
     llm_provider: str = "openai_compatible"
     llm_base_url: str = "https://api.example.com/v1"
@@ -33,6 +35,8 @@ class Settings:
     http_max_redirects: int = 3
     http_max_response_bytes: int = 1024 * 1024
     http_allowed_ports: tuple[int, ...] = (80, 443)
+    workflow_soft_time_limit_seconds: int = 120
+    workflow_time_limit_seconds: int = 150
 
 
 def load_env_file(path: Path = Path(".env")) -> None:
@@ -58,6 +62,12 @@ def get_settings() -> Settings:
         port=int(os.getenv("PORT", Settings.port)),
         log_level=os.getenv("LOG_LEVEL", Settings.log_level).upper(),
         database_url=os.getenv("DATABASE_URL", Settings.database_url),
+        database_pool_min_size=int(
+            os.getenv("DATABASE_POOL_MIN_SIZE", Settings.database_pool_min_size)
+        ),
+        database_pool_max_size=int(
+            os.getenv("DATABASE_POOL_MAX_SIZE", Settings.database_pool_max_size)
+        ),
         redis_url=os.getenv("REDIS_URL", Settings.redis_url),
         llm_provider=os.getenv("LLM_PROVIDER", Settings.llm_provider),
         llm_base_url=os.getenv("LLM_BASE_URL", Settings.llm_base_url),
@@ -97,6 +107,15 @@ def get_settings() -> Settings:
             int(port.strip())
             for port in os.getenv("HTTP_ALLOWED_PORTS", "80,443").split(",")
             if port.strip()
+        ),
+        workflow_soft_time_limit_seconds=int(
+            os.getenv(
+                "WORKFLOW_SOFT_TIME_LIMIT_SECONDS",
+                Settings.workflow_soft_time_limit_seconds,
+            )
+        ),
+        workflow_time_limit_seconds=int(
+            os.getenv("WORKFLOW_TIME_LIMIT_SECONDS", Settings.workflow_time_limit_seconds)
         ),
     )
 

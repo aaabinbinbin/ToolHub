@@ -53,3 +53,17 @@ class TaskEventRepository:
                 "payload": Jsonb(payload) if payload is not None else None,
             },
         )
+
+    def list_by_task_id(self, task_id: UUID) -> list[dict[str, Any]]:
+        """按时间顺序查询任务事件。"""
+        return list(
+            self.connection.execute(
+                """
+                SELECT *
+                FROM task_events
+                WHERE task_id = %(task_id)s
+                ORDER BY created_at ASC
+                """,
+                {"task_id": task_id},
+            ).fetchall()
+        )

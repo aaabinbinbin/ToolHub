@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from psycopg import Connection
+from psycopg.types.json import Jsonb
 
 from app.schemas.permission import RunMode
 
@@ -59,6 +60,86 @@ class TaskRepository:
                 "status": status,
             },
         ).fetchone()
+
+    def create_queued_task(
+        self,
+        *,
+        user_input: str,
+        run_mode: RunMode,
+        priority: str,
+    ) -> dict[str, Any]:
+        """创建一条等待 Celery worker 执行的任务。"""
+        task_id = uuid4()
+        run_id = uuid4()
+        trace_id = uuid4()
+        return self.connection.execute(
+            """
+            INSERT INTO tasks (
+                id, run_id, trace_id, user_input, run_mode, priority, status,
+                current_step, created_at, updated_at
+            )
+            VALUES (
+                %(id)s, %(run_id)s, %(trace_id)s, %(user_input)s, %(run_mode)s,
+                %(priority)s, 'QUEUED', 'submit_task', now(), now()
+            )
+            RETURNING *
+            """,
+            {
+                "id": task_id,
+                "run_id": run_id,
+                "trace_id": trace_id,
+                "user_input": user_input,
+                "run_mode": run_mode.value,
+                "priority": priority,
+            },
+        ).fetchone()
+
+    def get_by_id(self, task_id: UUID) -> dict[str, Any] | None:
+        """按 ID 查询任务。"""
+        return self.connection.execute(
+            "SELECT * FROM tasks WHERE id = %(task_id)s",
+            {"task_id": task_id},
+        ).fetchone()
+
+    def update_status(
+        self,
+        *,
+        task_id: UUID,
+        status: str,
+        current_step: str | None = None,
+        error_message: str | None = None,
+        result: dict[str, Any] | None = None,
+        selected_tool_id: UUID | None = None,
+    ) -> None:
+        """更新任务状态、当前步骤、结果和错误信息。"""
+        self.connection.execute(
+            """
+            UPDATE tasks
+            SET status = %(status)s,
+                current_step = COALESCE(%(current_step)s, current_step),
+                error_message = %(error_message)s,
+                result = %(result)s,
+                selected_tool_id = COALESCE(%(selected_tool_id)s, selected_tool_id),
+                started_at = CASE
+                    WHEN %(status)s = 'RUNNING' AND started_at IS NULL THEN now()
+                    ELSE started_at
+                END,
+                finished_at = CASE
+                    WHEN %(status)s IN ('SUCCESS', 'FAILED', 'DENIED', 'NO_TOOL') THEN now()
+                    ELSE finished_at
+                END,
+                updated_at = now()
+            WHERE id = %(task_id)s
+            """,
+            {
+                "task_id": task_id,
+                "status": status,
+                "current_step": current_step,
+                "error_message": error_message,
+                "result": Jsonb(result) if result is not None else None,
+                "selected_tool_id": selected_tool_id,
+            },
+        )
 
     def update_status_and_selected_tool(
         self,

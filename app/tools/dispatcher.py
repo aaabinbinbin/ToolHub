@@ -8,7 +8,7 @@ from app.repositories.db import get_connection
 from app.repositories.tool_call_repository import ToolCallRepository
 from app.schemas.tool import ToolResponse, ToolType
 from app.schemas.tool_call import ToolCallResult
-from app.tools.adapters.base import BaseToolAdapter
+from app.tools.adapters.base import BaseToolAdapter, ToolAdapterExecutionError
 from app.tools.adapters.cli_adapter import CLIToolAdapter
 from app.tools.adapters.http_adapter import HTTPToolAdapter
 from app.tools.adapters.mcp_adapter import MCPToolAdapter
@@ -42,7 +42,13 @@ class ToolAdapterDispatcher:
         adapter = self.adapters[tool.tool_type]
 
         try:
-            output = adapter.call(tool, tool_input)
+            output = adapter.call(
+                tool,
+                tool_input,
+                task_id=task_id,
+                run_id=run_id,
+                trace_id=trace_id,
+            )
             result = ToolCallResult(
                 success=True,
                 status="SUCCESS",
@@ -51,6 +57,21 @@ class ToolAdapterDispatcher:
                 tool_type=tool.tool_type.value,
                 input=tool_input,
                 output=output,
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+                run_id=run_id,
+                trace_id=trace_id,
+                task_id=task_id,
+            )
+        except ToolAdapterExecutionError as exc:
+            result = ToolCallResult(
+                success=False,
+                status="FAILED",
+                tool_id=tool.id,
+                tool_name=tool.name,
+                tool_type=tool.tool_type.value,
+                input=tool_input,
+                output=exc.output,
+                error_message=str(exc),
                 duration_ms=int((time.perf_counter() - started_at) * 1000),
                 run_id=run_id,
                 trace_id=trace_id,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from app.schemas.tool import ToolResponse
 from app.tools.adapters.base import BaseToolAdapter
@@ -9,10 +10,18 @@ from app.tools.adapters.base import BaseToolAdapter
 class MCPToolAdapter(BaseToolAdapter):
     """MCP 工具适配器。
 
-    Day 4 先提供 calculator demo 能力；真实 MCP 协议调用后续接入 MCP client。
+    目前 先提供 calculator demo 能力；真实 MCP 协议调用后续接入 MCP client。
     """
 
-    def call(self, tool: ToolResponse, tool_input: dict[str, Any]) -> dict[str, Any]:
+    def call(
+        self,
+        tool: ToolResponse,
+        tool_input: dict[str, Any],
+        *,
+        task_id: UUID | None = None,
+        run_id: UUID | None = None,
+        trace_id: UUID | None = None,
+    ) -> dict[str, Any]:
         if "calculator" not in tool.name.lower():
             raise NotImplementedError("MCP adapter currently supports calculator demo only")
 

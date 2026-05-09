@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
+
+from app.common.config import get_settings
 
 
 ParamType = Literal["bool", "enum", "int", "path", "string"]
@@ -59,17 +63,20 @@ class CLICommandPlan:
 class CLICommandPolicy:
     """CLI 工具规则策略。
 
-    当前先内置少量安全只读规则；后续可以扩展为读取 config/cli_policy.yaml。
+    默认从 `config/cli_policy.json` 读取规则；配置缺失时使用内置只读规则兜底。
     """
-    # todo 待后续扩展命令
+
     LEGACY_RULE_IDS = {
         "git status": "cli://git/status-short",
         "git status --short": "cli://git/status-short",
     }
     SHELL_TOKENS = {";", "&&", "||", "|", "`", "$(", ">", "<", "\n", "\r"}
 
-    def __init__(self) -> None:
+    def __init__(self, config_path: str | Path | None = None) -> None:
+        # 先加载内置安全规则，再用配置文件覆盖或扩展，保证配置缺失时仍可运行。
+        self.config_path = Path(config_path or get_settings().cli_policy_path)
         self.rules = self._default_rules()
+        self.rules.update(self._load_config_rules(self.config_path))
 
     def build_plan(
         self,
@@ -186,8 +193,94 @@ class CLICommandPolicy:
         """展示 cli命令"""
         return f"{rule_id} {args}".strip()
 
+    def _load_config_rules(self, path: Path) -> dict[str, CLICommandRule]:
+        """从 JSON 文件读取 CLI 规则配置。"""
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"CLI policy config is not valid JSON: {path}") from exc
+
+        raw_rules = payload.get("rules")
+        if not isinstance(raw_rules, list):
+            raise ValueError("CLI policy config must contain a rules list")
+
+        rules: dict[str, CLICommandRule] = {}
+        for raw_rule in raw_rules:
+            rule = self._rule_from_mapping(raw_rule)
+            rules[rule.id] = rule
+        return rules
+
+    def _rule_from_mapping(self, value: Any) -> CLICommandRule:
+        """把配置文件中的 dict 转换为 CLICommandRule。"""
+        if not isinstance(value, dict):
+            raise ValueError("CLI rule config item must be an object")
+
+        params = {
+            name: self._param_rule_from_mapping(raw_param)
+            for name, raw_param in (value.get("params") or {}).items()
+        }
+        argv_template = value.get("argv_template")
+        if not isinstance(argv_template, list) or not all(
+            isinstance(item, str) for item in argv_template
+        ):
+            raise ValueError("CLI rule argv_template must be a list of strings")
+
+        return CLICommandRule(
+            id=self._required_text(value, "id"),
+            description=self._required_text(value, "description"),
+            effect=self._effect(value.get("effect", "DENY")),
+            risk_level=self._required_text(value, "risk_level"),
+            image=self._required_text(value, "image"),
+            argv_template=argv_template,
+            params=params,
+            workdir=str(value.get("workdir", "/workspace")),
+            mount_workspace=bool(value.get("mount_workspace", True)),
+            readonly_workspace=bool(value.get("readonly_workspace", True)),
+            network_disabled=bool(value.get("network_disabled", True)),
+            timeout_seconds=int(value.get("timeout_seconds", 10)),
+            mem_limit=value.get("mem_limit"),
+            pids_limit=value.get("pids_limit"),
+        )
+
+    def _param_rule_from_mapping(self, value: Any) -> CLIParamRule:
+        """把配置文件中的参数定义转换为 CLIParamRule。"""
+        if not isinstance(value, dict):
+            raise ValueError("CLI param rule config item must be an object")
+        param_type = self._param_type(value.get("type"))
+        return CLIParamRule(
+            type=param_type,
+            default=value.get("default"),
+            flag=value.get("flag"),
+            choices=tuple(str(choice) for choice in value.get("choices", [])),
+            min_value=value.get("min_value"),
+            max_value=value.get("max_value"),
+            max_length=int(value.get("max_length", 120)),
+            allow_absolute=bool(value.get("allow_absolute", False)),
+            allow_parent=bool(value.get("allow_parent", False)),
+        )
+
+    def _required_text(self, value: dict[str, Any], key: str) -> str:
+        text = str(value.get(key) or "").strip()
+        if not text:
+            raise ValueError(f"CLI rule config requires {key}")
+        return text
+
+    def _effect(self, value: Any) -> Effect:
+        text = str(value).upper()
+        if text not in {"ALLOW", "ASK", "DENY"}:
+            raise ValueError(f"CLI rule effect is invalid: {value}")
+        return text  # type: ignore[return-value]
+
+    def _param_type(self, value: Any) -> ParamType:
+        text = str(value).lower()
+        if text not in {"bool", "enum", "int", "path", "string"}:
+            raise ValueError(f"CLI param type is invalid: {value}")
+        return text  # type: ignore[return-value]
+
     def _default_rules(self) -> dict[str, CLICommandRule]:
-        """这里展示了如何配置两个具体的 Git 命令"""
+        """配置文件缺失时使用的内置只读规则。"""
         return {
             "cli://git/status-short": CLICommandRule(
                 id="cli://git/status-short",

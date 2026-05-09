@@ -169,6 +169,42 @@ DEMO_TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "toolhub-demo-cli-git-log",
+        "description": "Demo CLI tool: inspect recent git commit history through DockerSandbox using the safe git log rule.",
+        "tool_type": ToolType.CLI,
+        "endpoint": "cli://git/log-oneline",
+        "version": "1.0.0",
+        "tags": ["demo", "cli", "git", "log"],
+        "risk_level": RiskLevel.MEDIUM,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "rule_id": {"type": "string", "const": "cli://git/log-oneline"},
+                "args": {
+                    "type": "object",
+                    "properties": {
+                        "max_count": {"type": "integer", "minimum": 1, "maximum": 20},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "additionalProperties": False,
+        },
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "rule_id": {"type": "string"},
+                "command": {"type": "string"},
+                "argv": {"type": "array", "items": {"type": "string"}},
+                "stdout": {"type": "string"},
+                "stderr": {"type": "string"},
+                "exit_code": {"type": "integer"},
+                "sandbox_status": {"type": "string"},
+            },
+            "required": ["rule_id", "stdout", "stderr", "exit_code", "sandbox_status"],
+        },
+    },
+    {
         "name": "toolhub-demo-python-sandbox",
         "description": "Demo Sandbox tool: execute short Python code in DockerSandbox with network disabled.",
         "tool_type": ToolType.SANDBOX,

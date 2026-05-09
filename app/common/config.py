@@ -30,6 +30,7 @@ class Settings:
     sandbox_pids_limit: int = 64
     sandbox_timeout_seconds: int = 10
     sandbox_network_disabled: bool = True
+    cli_policy_path: str = "config/cli_policy.json"
     http_timeout_seconds: float = 10
     http_max_retries: int = 2
     http_max_redirects: int = 3
@@ -93,6 +94,7 @@ def get_settings() -> Settings:
             str(Settings.sandbox_network_disabled),
         ).lower()
         in {"1", "true", "yes", "on"},
+        cli_policy_path=os.getenv("CLI_POLICY_PATH", Settings.cli_policy_path),
         http_timeout_seconds=float(
             os.getenv("HTTP_TIMEOUT_SECONDS", Settings.http_timeout_seconds)
         ),

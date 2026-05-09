@@ -1,0 +1,79 @@
+{
+  "version": "1.0",
+  "rules": [
+    {
+      "id": "cli://git/status-short",
+      "description": "查看 Git 工作区简短状态",
+      "effect": "ALLOW",
+      "risk_level": "LOW",
+      "image": "alpine/git:latest",
+      "argv_template": [
+        "-c",
+        "safe.directory=/workspace",
+        "status",
+        "--short"
+      ],
+      "params": {},
+      "workdir": "/workspace",
+      "mount_workspace": true,
+      "readonly_workspace": true,
+      "network_disabled": true,
+      "timeout_seconds": 10
+    },
+    {
+      "id": "cli://git/diff",
+      "description": "查看 Git diff，只读",
+      "effect": "ALLOW",
+      "risk_level": "LOW",
+      "image": "alpine/git:latest",
+      "argv_template": [
+        "-c",
+        "safe.directory=/workspace",
+        "diff"
+      ],
+      "params": {
+        "staged": {
+          "type": "bool",
+          "default": false,
+          "flag": "--staged"
+        },
+        "path": {
+          "type": "path",
+          "default": "."
+        }
+      },
+      "workdir": "/workspace",
+      "mount_workspace": true,
+      "readonly_workspace": true,
+      "network_disabled": true,
+      "timeout_seconds": 10
+    },
+    {
+      "id": "cli://git/log-oneline",
+      "description": "查看 Git 提交历史，只读",
+      "effect": "ALLOW",
+      "risk_level": "LOW",
+      "image": "alpine/git:latest",
+      "argv_template": [
+        "-c",
+        "safe.directory=/workspace",
+        "log",
+        "--oneline",
+        "-n"
+      ],
+      "params": {
+        "max_count": {
+          "type": "int",
+          "default": 5,
+          "min_value": 1,
+          "max_value": 20
+        }
+      },
+      "workdir": "/workspace",
+      "mount_workspace": true,
+      "readonly_workspace": true,
+      "network_disabled": true,
+      "timeout_seconds": 10
+    }
+  ]
+}

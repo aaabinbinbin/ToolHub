@@ -344,6 +344,8 @@ class LLMClient:
 
     def _mock_intent_response(self, prompt: str) -> str:
         """根据 prompt 关键词生成 mock 意图识别结果。"""
+        if '"output_schema"' in prompt and '"planning_rules"' in prompt:
+            return self._mock_plan_response(prompt)
         if "final_answer" in prompt and "summary_type" in prompt:
             return self._mock_summary_response(prompt)
 
@@ -410,11 +412,23 @@ class LLMClient:
                 "summary_type": "DENIED",
                 "next_action": "切换到允许的运行模式或选择低风险工具。",
             }
+        elif '"summary_type": "WAITING_APPROVAL"' in prompt:
+            summary = {
+                "final_answer": "任务已暂停，正在等待人工审批。审批通过后任务会继续执行。",
+                "summary_type": "WAITING_APPROVAL",
+                "next_action": "请在审批列表中处理该请求。",
+            }
         elif '"summary_type": "NO_TOOL"' in prompt:
             summary = {
                 "final_answer": "当前没有可用工具可以处理这个请求，请先注册合适的工具或调整输入描述。",
                 "summary_type": "NO_TOOL",
                 "next_action": "注册工具或重新描述需求。",
+            }
+        elif '"summary_type": "PLANNED"' in prompt:
+            summary = {
+                "final_answer": "已生成执行计划，PLAN_ONLY 模式不会执行工具。",
+                "summary_type": "PLANNED",
+                "next_action": "切换到 SAFE_EXECUTE 或 FULL_EXECUTE 后可执行。",
             }
         elif '"summary_type": "FAILED"' in prompt:
             summary = {
@@ -429,3 +443,97 @@ class LLMClient:
                 "next_action": "NONE",
             }
         return json.dumps(summary, ensure_ascii=False)
+
+    def _mock_plan_response(self, prompt: str) -> str:
+        """根据 planner prompt 生成稳定的 mock 多步计划。"""
+        user_input = self._extract_mock_planner_user_input(prompt)
+        lower_user_input = user_input.lower()
+        steps: list[dict[str, Any]] = []
+
+        if "git" in lower_user_input:
+            if "status" in lower_user_input or "状态" in user_input:
+                steps.append(
+                    {
+                        "objective": "查看 Git 工作区状态",
+                        "intent": "CLI_EXECUTION",
+                        "suggested_tool_type": "CLI",
+                        "tool_input": {
+                            "rule_id": "cli://git/status-short",
+                            "args": {},
+                        },
+                    }
+                )
+            if "diff" in lower_user_input or "变更" in user_input or "差异" in user_input:
+                steps.append(
+                    {
+                        "objective": "查看 Git 工作区 diff",
+                        "intent": "CLI_EXECUTION",
+                        "suggested_tool_type": "CLI",
+                        "tool_input": {
+                            "rule_id": "cli://git/diff",
+                            "args": {"path": ".", "staged": False},
+                        },
+                    }
+                )
+            if "log" in lower_user_input or "提交历史" in user_input:
+                steps.append(
+                    {
+                        "objective": "查看 Git 最近提交历史",
+                        "intent": "CLI_EXECUTION",
+                        "suggested_tool_type": "CLI",
+                        "tool_input": {
+                            "rule_id": "cli://git/log-oneline",
+                            "args": {"max_count": 5},
+                        },
+                    }
+                )
+
+        if not steps and ("python" in lower_user_input or "print(" in lower_user_input):
+            code_match = re.search(r"(print\(.*\)|sum\(.*\))", user_input)
+            steps.append(
+                {
+                    "objective": "在沙箱中运行 Python 代码",
+                    "intent": "RUN_CODE",
+                    "suggested_tool_type": "SANDBOX",
+                    "tool_input": {
+                        "language": "python",
+                        "code": code_match.group(1) if code_match else user_input,
+                    },
+                }
+            )
+
+        if not steps and ("http" in lower_user_input or "echo" in lower_user_input):
+            steps.append(
+                {
+                    "objective": "调用 HTTP 工具",
+                    "intent": "HTTP_CALL",
+                    "suggested_tool_type": "HTTP",
+                    "tool_input": {"method": "GET", "params": {"q": user_input}},
+                }
+            )
+
+        if not steps:
+            steps.append(
+                {
+                    "objective": user_input,
+                    "intent": "GENERAL_QUERY",
+                    "suggested_tool_type": None,
+                    "tool_input": {},
+                }
+            )
+
+        return json.dumps(
+            {
+                "steps": steps[:3],
+                "reason": "mock planner 根据用户输入和可用工具摘要生成稳定计划。",
+            },
+            ensure_ascii=False,
+        )
+
+    def _extract_mock_planner_user_input(self, prompt: str) -> str:
+        """从 JSON planner prompt 中提取用户输入。"""
+        try:
+            payload = json.loads(prompt)
+        except json.JSONDecodeError:
+            return prompt
+        return str(payload.get("user_input") or prompt)

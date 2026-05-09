@@ -49,17 +49,23 @@ def run_agent_task(task_id: str) -> dict:
         error_message = final_state.get("error_message")
         result = {
             "intent": final_state.get("intent"),
+            "plan": final_state.get("plan"),
+            "steps": final_state.get("steps"),
             "route": final_state.get("route"),
             "permission": final_state.get("permission"),
             "tool_input": final_state.get("tool_input"),
             "tool_result": final_state.get("tool_result"),
+            "observations": final_state.get("observations"),
+            "stop_reason": final_state.get("stop_reason"),
             "summary": final_state.get("summary"),
         }
         with get_connection() as connection:
             TaskRepository(connection).update_status(
                 task_id=task_uuid,
                 status=final_status,
-                current_step="completed",
+                current_step="waiting_approval"
+                if final_status == "WAITING_APPROVAL"
+                else "completed",
                 error_message=error_message,
                 result=result,
             )
@@ -70,7 +76,9 @@ def run_agent_task(task_id: str) -> dict:
                 event_type="TASK_COMPLETED"
                 if final_status == "SUCCESS"
                 else f"TASK_{final_status}",
-                step="completed",
+                step="waiting_approval"
+                if final_status == "WAITING_APPROVAL"
+                else "completed",
                 message=f"任务结束，状态：{final_status}。",
                 payload=result,
             )

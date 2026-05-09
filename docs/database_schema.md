@@ -14,6 +14,7 @@ ToolHub 的数据库主要用于保存 Agent Harness 执行链路中的核心数
 - LLM 调用日志：`llm_calls`
 - 工具健康检查：`tool_health_checks`
 - 工具权限策略：`tool_permissions`
+- 人工审批请求：`approval_requests`
 
 当前数据库使用 PostgreSQL，核心原因是项目需要大量保存 JSONB 类型的半结构化数据，例如工具输入输出、LLM 响应、事件 payload、权限条件等。
 
@@ -30,6 +31,7 @@ tasks
   ├── tool_calls.task_id
   ├── sandbox_executions.task_id
   └── llm_calls.task_id
+  └── approval_requests.task_id
 ```
 
 `run_id` 和 `trace_id` 会贯穿任务、事件、工具调用、沙箱执行和 LLM 调用，用于串联一次完整 Agent Harness 执行链路。
@@ -325,6 +327,41 @@ TASK_CANCELLED
 | `effect` | `TEXT` | Not Null, Check | 策略结果，只允许 `ALLOW`、`ASK`、`DENY` |
 | `condition` | `JSONB` | Nullable | 策略条件，例如 run_mode、risk_level、命令模式 |
 | `created_at` | `TIMESTAMPTZ` | Not Null, Default `now()` | 创建时间 |
+
+---
+
+## 9. approval_requests
+
+### 用途
+
+`approval_requests` 表用于保存高风险工具调用的人工审批请求。当 `PermissionEngine`
+返回 `ASK` 时，Harness 会创建或复用待审批请求，并将任务状态置为
+`WAITING_APPROVAL`。
+
+### 字段说明
+
+| 字段 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | `UUID` | Primary Key | 审批请求 ID |
+| `task_id` | `UUID` | Not Null, FK `tasks(id)` | 所属任务 ID |
+| `run_id` | `UUID` | Not Null | 所属 Harness run ID |
+| `trace_id` | `UUID` | Not Null | 全链路 trace ID |
+| `tool_id` | `UUID` | Nullable, FK `tools(id)` | 申请执行的工具 ID |
+| `requested_action` | `TEXT` | Not Null | 申请动作，例如 `execute:python-sandbox` |
+| `reason` | `TEXT` | Not Null | 需要审批的原因 |
+| `status` | `TEXT` | Not Null, Check | `PENDING`、`APPROVED`、`REJECTED`、`EXPIRED` |
+| `requested_by` | `TEXT` | Nullable | 审批请求发起者 |
+| `decided_by` | `TEXT` | Nullable | 审批处理人 |
+| `decision_reason` | `TEXT` | Nullable | 审批通过或拒绝原因 |
+| `created_at` | `TIMESTAMPTZ` | Not Null, Default `now()` | 创建时间 |
+| `decided_at` | `TIMESTAMPTZ` | Nullable | 审批处理时间 |
+
+### 索引
+
+| 索引 | 字段 | 用途 |
+|---|---|---|
+| `idx_approval_requests_task_id` | `task_id` | 查询某个任务的审批请求 |
+| `idx_approval_requests_status` | `status` | 查询待审批请求 |
 
 ---
 

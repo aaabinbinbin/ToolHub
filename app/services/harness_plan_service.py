@@ -142,6 +142,8 @@ class HarnessPlanService:
                     trace_id=trace_id,
                     event_type="PERMISSION_ALLOWED"
                     if permission.allowed
+                    else "PERMISSION_ASKED"
+                    if permission.decision.value == "ASK"
                     else "PERMISSION_DENIED",
                     step="check_permission",
                     message=permission.reason,
@@ -159,4 +161,6 @@ class HarnessPlanService:
         """根据权限判断结果得到预演任务状态。"""
         if permission is None:
             return "NO_TOOL"
+        if permission.decision.value == "ASK":
+            return "WAITING_APPROVAL"
         return "PLANNED" if permission.allowed else "DENIED"

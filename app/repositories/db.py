@@ -153,6 +153,24 @@ CREATE TABLE IF NOT EXISTS tool_permissions (
     condition JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+    id UUID PRIMARY KEY,
+    task_id UUID NOT NULL REFERENCES tasks(id),
+    run_id UUID NOT NULL,
+    trace_id UUID NOT NULL,
+    tool_id UUID REFERENCES tools(id),
+    requested_action TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'EXPIRED')),
+    requested_by TEXT,
+    decided_by TEXT,
+    decision_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    decided_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_task_id ON approval_requests(task_id);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
 """
 
 _connection_pool: ConnectionPool | None = None

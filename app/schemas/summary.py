@@ -5,7 +5,14 @@ from typing import Literal
 from pydantic import BaseModel
 
 
-SummaryType = Literal["SUCCESS", "FAILED", "DENIED", "NO_TOOL"]
+SummaryType = Literal[
+    "SUCCESS",
+    "FAILED",
+    "DENIED",
+    "NO_TOOL",
+    "WAITING_APPROVAL",
+    "PLANNED",
+]
 
 
 class ResultSummary(BaseModel):
@@ -16,4 +23,3 @@ class ResultSummary(BaseModel):
     next_action: str | None = None
     fallback_used: bool = False
     raw_response: str | None = None
-

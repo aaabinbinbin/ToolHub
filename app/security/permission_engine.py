@@ -34,12 +34,12 @@ class PermissionEngine:
                 else RunMode.FULL_EXECUTE,
             )
 
-        if tool.risk_level == RiskLevel.HIGH and run_mode != RunMode.FULL_EXECUTE:
-            # HIGH 风险工具只有 FULL_EXECUTE 才允许继续进入执行阶段。
+        if tool.risk_level == RiskLevel.HIGH and run_mode == RunMode.SAFE_EXECUTE:
+            # SAFE_EXECUTE 下的 HIGH 风险工具进入人工审批，而不是直接执行。
             return PermissionDecision(
                 allowed=False,
-                decision=PermissionDecisionType.DENY,
-                reason="工具风险等级为 HIGH，当前 run_mode 不是 FULL_EXECUTE，拒绝执行。",
+                decision=PermissionDecisionType.ASK,
+                reason="工具风险等级为 HIGH，当前 run_mode 为 SAFE_EXECUTE，需要人工审批后才能执行。",
                 run_mode=run_mode,
                 risk_level=tool.risk_level,
                 required_mode=RunMode.FULL_EXECUTE,

@@ -14,6 +14,8 @@ SUMMARY_SYSTEM_TEMPLATE = """
 
 你必须遵守项目规则，不要声称执行了实际没有执行的工具。
 权限拒绝、无工具、工具失败时，要明确说明原因和下一步建议。
+等待审批时，要明确说明任务已经暂停，等待人工审批后继续。
+只生成计划时，要明确说明当前没有执行任何工具。
 
 项目规则：
 {instructions}
@@ -25,7 +27,8 @@ SUMMARY_USER_TEMPLATE = """
 输出必须是严格 JSON，不要输出 Markdown，不要输出解释文字。
 JSON 字段：
 - final_answer: 面向用户的中文最终答案
-- summary_type: SUCCESS / FAILED / DENIED / NO_TOOL
+- summary_type: SUCCESS / FAILED / DENIED / NO_TOOL / WAITING_APPROVAL / PLANNED
+- summary_type 可选值：SUCCESS / FAILED / DENIED / NO_TOOL / WAITING_APPROVAL / PLANNED
 - next_action: 下一步建议，没有则为 NONE
 
 执行上下文：
@@ -149,7 +152,13 @@ class ResultSummarizerService:
     ) -> SummaryType:
         if status == "NO_TOOL":
             return "NO_TOOL"
+        if status == "WAITING_APPROVAL":
+            return "WAITING_APPROVAL"
+        if status == "PLANNED":
+            return "PLANNED"
         if status == "DENIED" or (permission and not permission.get("allowed", False)):
+            if permission and permission.get("decision") == "ASK":
+                return "WAITING_APPROVAL"
             return "DENIED"
         if status == "SUCCESS" and tool_result and tool_result.get("success"):
             return "SUCCESS"
@@ -157,7 +166,14 @@ class ResultSummarizerService:
 
     def _safe_summary_type(self, value: Any, default: SummaryType) -> SummaryType:
         raw_value = str(value or "").strip().upper()
-        if raw_value in {"SUCCESS", "FAILED", "DENIED", "NO_TOOL"}:
+        if raw_value in {
+            "SUCCESS",
+            "FAILED",
+            "DENIED",
+            "NO_TOOL",
+            "WAITING_APPROVAL",
+            "PLANNED",
+        }:
             return raw_value  # type: ignore[return-value]
         return default
 
@@ -176,12 +192,33 @@ class ResultSummarizerService:
                 summary_type="DENIED",
                 next_action=(permission or {}).get("required_mode") or "请调整运行模式或工具权限后重试。",
             )
+        if summary_type == "WAITING_APPROVAL":
+            reason = (permission or {}).get("reason") or "该任务需要人工审批。"
+            approval_id = (permission or {}).get("approval_id")
+            next_action = (
+                f"请审批 approval_id={approval_id}。"
+                if approval_id
+                else "请在审批列表中处理该请求。"
+            )
+            return ResultSummary(
+                final_answer=f"任务已暂停，等待人工审批：{reason}",
+                summary_type="WAITING_APPROVAL",
+                next_action=next_action,
+            )
         if summary_type == "NO_TOOL":
             reason = (route or {}).get("reason") or "没有匹配到可用工具。"
             return ResultSummary(
                 final_answer=f"当前没有可用工具可以处理这个请求：{reason}",
                 summary_type="NO_TOOL",
                 next_action="请先注册合适的工具，或调整输入描述。",
+            )
+        if summary_type == "PLANNED":
+            output = (tool_result or {}).get("output") or {}
+            steps = output.get("steps") if isinstance(output, dict) else []
+            return ResultSummary(
+                final_answer=f"已生成执行计划，共 {len(steps or [])} 个步骤；PLAN_ONLY 模式不会执行工具。",
+                summary_type="PLANNED",
+                next_action="切换到 SAFE_EXECUTE 或 FULL_EXECUTE 后可执行该计划。",
             )
         if summary_type == "FAILED":
             error = (tool_result or {}).get("error_message")

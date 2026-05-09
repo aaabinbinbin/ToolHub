@@ -125,7 +125,7 @@ class TaskRepository:
                     ELSE started_at
                 END,
                 finished_at = CASE
-                    WHEN %(status)s IN ('SUCCESS', 'FAILED', 'DENIED', 'NO_TOOL') THEN now()
+                    WHEN %(status)s IN ('SUCCESS', 'FAILED', 'DENIED', 'NO_TOOL', 'PLANNED') THEN now()
                     ELSE finished_at
                 END,
                 updated_at = now()
@@ -173,3 +173,37 @@ class TaskRepository:
                 "current_step": current_step,
             },
         )
+
+    def update_after_approval(
+        self,
+        *,
+        task_id: UUID,
+        status: str,
+        run_mode: RunMode | None = None,
+        current_step: str,
+        error_message: str | None = None,
+    ) -> dict[str, Any] | None:
+        """审批动作后更新任务状态和运行模式。"""
+        return self.connection.execute(
+            """
+            UPDATE tasks
+            SET status = %(status)s,
+                run_mode = COALESCE(%(run_mode)s, run_mode),
+                current_step = %(current_step)s,
+                error_message = %(error_message)s,
+                finished_at = CASE
+                    WHEN %(status)s IN ('SUCCESS', 'FAILED', 'DENIED', 'NO_TOOL', 'PLANNED') THEN now()
+                    ELSE NULL
+                END,
+                updated_at = now()
+            WHERE id = %(task_id)s
+            RETURNING *
+            """,
+            {
+                "task_id": task_id,
+                "status": status,
+                "run_mode": run_mode.value if run_mode is not None else None,
+                "current_step": current_step,
+                "error_message": error_message,
+            },
+        ).fetchone()

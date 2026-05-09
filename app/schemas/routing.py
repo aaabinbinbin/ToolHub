@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from uuid import UUID
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +19,17 @@ class ToolRouteRequest(BaseModel):
     user_input: str = Field(min_length=1)
     intent: str | None = None
     suggested_tool_type: str | None = None
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolRouteCandidateDetail(BaseModel):
+    """单个候选工具的路由诊断信息。"""
+
+    tool: ToolResponse
+    score: int
+    schema_match: bool = True
+    missing_fields: list[str] = Field(default_factory=list)
+    rejection_reason: str | None = None
 
 
 class ToolRouteResult(BaseModel):
@@ -30,6 +42,10 @@ class ToolRouteResult(BaseModel):
     score: int
     reason: str
     candidates: list[ToolResponse]
+    candidate_details: list[ToolRouteCandidateDetail] = Field(default_factory=list)
+    schema_match: bool = True
+    missing_fields: list[str] = Field(default_factory=list)
+    rejection_reason: str | None = None
 
 
 class HarnessPlanRequest(BaseModel):

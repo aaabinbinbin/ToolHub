@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import re
 
-from app.schemas.routing import ToolRouteResult
+from typing import Any
+
+from app.schemas.routing import ToolRouteCandidateDetail, ToolRouteResult
 from app.schemas.tool import HealthStatus, RiskLevel, ToolResponse
+from app.services.schema_validation_service import SchemaValidationService
 from app.services.tool_registry_service import ToolRegistryService
 
 
@@ -29,13 +32,18 @@ class ToolRouterService:
         "没有",
     }
 
-    def __init__(self, tool_registry_service: ToolRegistryService | None = None) -> None:
+    def __init__(
+        self,
+        tool_registry_service: ToolRegistryService | None = None,
+        schema_validation_service: SchemaValidationService | None = None,
+    ) -> None:
         """创建工具路由服务。
 
         Args:
             tool_registry_service: 工具注册中心服务。不传时使用默认实现。
         """
         self.tool_registry_service = tool_registry_service or ToolRegistryService()
+        self.schema_validation_service = schema_validation_service or SchemaValidationService()
 
     def select_tool(
         self,
@@ -43,6 +51,7 @@ class ToolRouterService:
         user_input: str,
         intent: str | None = None,
         suggested_tool_type: str | None = None,
+        tool_input: dict[str, Any] | None = None,
     ) -> ToolRouteResult:
         """从 ACTIVE 工具中选择一个得分最高的工具。
 
@@ -50,6 +59,7 @@ class ToolRouterService:
             user_input: 用户原始输入。
             intent: IntentService 输出的标准化意图。
             suggested_tool_type: IntentService 建议的工具类型。
+            tool_input: IntentService 输出的候选工具输入，用于 schema-aware 路由。
 
         Returns:
             工具路由结果，包含选中的工具、分数、候选工具和选择理由。
@@ -61,30 +71,91 @@ class ToolRouterService:
                 score=0,
                 reason="没有可用的 ACTIVE 工具。",
                 candidates=[],
+                candidate_details=[],
             )
 
-        scored_tools = [
-            (tool, self._score_tool(tool, user_input, intent, suggested_tool_type))
+        candidate_details = [
+            self._build_candidate_detail(
+                tool,
+                self._score_tool(tool, user_input, intent, suggested_tool_type),
+                tool_input or {},
+            )
             for tool in tools
         ]
-        # 分数越高越优先；只取前几个候选返回，避免响应过大。
-        scored_tools.sort(key=lambda item: item[1], reverse=True)
-        selected_tool, score = scored_tools[0]
+        # schema 匹配优先，其次分数越高越优先；只取前几个候选返回，避免响应过大。
+        candidate_details.sort(
+            key=lambda item: (item.schema_match, item.score),
+            reverse=True,
+        )
+        selected_candidate = candidate_details[0]
+        selected_tool = selected_candidate.tool
+        score = selected_candidate.score
 
         has_intent_signal = bool(suggested_tool_type or self._intent_to_tool_type(intent))
+        if not selected_candidate.schema_match:
+            return ToolRouteResult(
+                selected_tool=None,
+                score=0,
+                reason=f"候选工具的输入 schema 不匹配：{selected_candidate.rejection_reason}",
+                candidates=[item.tool for item in candidate_details[:5]],
+                candidate_details=candidate_details[:5],
+                schema_match=False,
+                missing_fields=selected_candidate.missing_fields,
+                rejection_reason=selected_candidate.rejection_reason,
+            )
+
         if score <= 0 or (score < 2 and not has_intent_signal):
             return ToolRouteResult(
                 selected_tool=None,
                 score=0,
                 reason="没有工具与当前用户输入或意图匹配。",
-                candidates=[tool for tool, _ in scored_tools[:5]],
+                candidates=[item.tool for item in candidate_details[:5]],
+                candidate_details=candidate_details[:5],
             )
 
         return ToolRouteResult(
             selected_tool=selected_tool,
             score=score,
-            reason=self._build_reason(selected_tool, score, intent, suggested_tool_type),
-            candidates=[tool for tool, _ in scored_tools[:5]],
+            reason=self._build_reason(
+                selected_tool,
+                score,
+                intent,
+                suggested_tool_type,
+                schema_match=selected_candidate.schema_match,
+            ),
+            candidates=[item.tool for item in candidate_details[:5]],
+            candidate_details=candidate_details[:5],
+            schema_match=selected_candidate.schema_match,
+            missing_fields=selected_candidate.missing_fields,
+            rejection_reason=selected_candidate.rejection_reason,
+        )
+
+    def _build_candidate_detail(
+        self,
+        tool: ToolResponse,
+        score: int,
+        tool_input: dict[str, Any],
+    ) -> ToolRouteCandidateDetail:
+        """生成候选工具的分数和 schema 诊断信息。"""
+        schema_result = self.schema_validation_service.validate_tool_input(
+            tool.input_schema,
+            tool_input,
+        )
+        rejection_reason = None
+        if not schema_result.valid:
+            detail_parts = []
+            if schema_result.missing_fields:
+                detail_parts.append(f"缺少字段 {schema_result.missing_fields}")
+            if schema_result.errors:
+                detail_parts.append("; ".join(schema_result.errors))
+            rejection_reason = "；".join(detail_parts) or "输入不符合工具 schema"
+
+        return ToolRouteCandidateDetail(
+            tool=tool,
+            score=score,
+            schema_match=schema_result.valid,
+            missing_fields=schema_result.missing_fields,
+            rejection_reason=rejection_reason,
         )
 
     def _score_tool(
@@ -156,9 +227,12 @@ class ToolRouterService:
         score: int,
         intent: str | None,
         suggested_tool_type: str | None,
+        schema_match: bool,
     ) -> str:
         """构造可展示、可审计的工具选择理由。"""
+        schema_text = "schema_match=YES" if schema_match else "schema_match=NO"
         return (
             f"选择工具 {tool.name}，得分 {score}。"
-            f" intent={intent or 'UNKNOWN'}，suggested_tool_type={suggested_tool_type or 'NONE'}。"
+            f" intent={intent or 'UNKNOWN'}，suggested_tool_type={suggested_tool_type or 'NONE'}，"
+            f"{schema_text}。"
         )

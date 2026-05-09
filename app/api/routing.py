@@ -29,4 +29,5 @@ def select_tool(
         user_input=request.user_input,
         intent=request.intent,
         suggested_tool_type=request.suggested_tool_type,
+        tool_input=request.tool_input,
     )

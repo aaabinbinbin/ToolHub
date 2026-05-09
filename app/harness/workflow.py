@@ -156,6 +156,7 @@ class AgentHarnessWorkflow:
             user_input=state["user_input"],
             intent=intent.get("intent"),
             suggested_tool_type=intent.get("suggested_tool_type"),
+            tool_input=state.get("tool_input") or {},
         )
         payload = route.model_dump(mode="json")
         selected_tool_id = route.selected_tool.id if route.selected_tool else None

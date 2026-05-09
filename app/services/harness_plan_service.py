@@ -58,6 +58,7 @@ class HarnessPlanService:
             user_input=request.user_input,
             intent=intent.intent,
             suggested_tool_type=intent.suggested_tool_type,
+            tool_input=intent.tool_input,
         )
 
         permission: PermissionDecision | None = None

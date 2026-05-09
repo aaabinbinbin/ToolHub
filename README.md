@@ -254,7 +254,30 @@ GET /api/tools/search?q=git
 POST /api/harness/plan
 ```
 
-只执行意图理解、工具路由和权限检查，不执行工具。
+只执行意图理解、工具路由和权限检查，不执行工具。ToolRouter 会结合工具
+`input_schema` 校验 IntentService 生成的 `tool_input`，并在路由结果中返回
+`candidate_details`、`schema_match`、`missing_fields` 和 `rejection_reason`。
+
+### 直接测试工具路由
+
+```http
+POST /api/router/select
+```
+
+请求可以显式传入 `tool_input`，用于调试 schema-aware 路由：
+
+```json
+{
+  "user_input": "请计算 1 + 2",
+  "intent": "CALCULATE",
+  "suggested_tool_type": "MCP",
+  "tool_input": {
+    "expression": "1 + 2"
+  }
+}
+```
+
+如果候选工具缺少必填字段或包含未声明字段，Router 不会选择该工具执行。
 
 ### 提交后台任务
 

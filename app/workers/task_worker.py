@@ -53,6 +53,7 @@ def run_agent_task(task_id: str) -> dict:
             "permission": final_state.get("permission"),
             "tool_input": final_state.get("tool_input"),
             "tool_result": final_state.get("tool_result"),
+            "summary": final_state.get("summary"),
         }
         with get_connection() as connection:
             TaskRepository(connection).update_status(

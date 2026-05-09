@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Iterator
 from typing import Any
@@ -343,16 +344,23 @@ class LLMClient:
 
     def _mock_intent_response(self, prompt: str) -> str:
         """根据 prompt 关键词生成 mock 意图识别结果。"""
+        if "final_answer" in prompt and "summary_type" in prompt:
+            return self._mock_summary_response(prompt)
+
         user_input = self._extract_mock_user_input(prompt)
         lower_user_input = user_input.lower()
         if "python" in lower_user_input or "print(" in lower_user_input:
+            code_match = re.search(r"(print\(.*\)|sum\(.*\))", user_input)
             intent = {
                 "intent": "RUN_CODE",
                 "summary": "用户想运行 Python 代码。",
                 "confidence": 0.9,
                 "risk_hint": "HIGH",
                 "suggested_tool_type": "SANDBOX",
-                "tool_input": {"language": "python"},
+                "tool_input": {
+                    "language": "python",
+                    "code_hint": code_match.group(1) if code_match else None,
+                },
             }
         elif "git status" in lower_user_input or "git 状态" in lower_user_input:
             intent = {
@@ -393,3 +401,31 @@ class LLMClient:
         if end_marker in user_part:
             user_part = user_part.split(end_marker, 1)[0]
         return user_part.strip()
+
+    def _mock_summary_response(self, prompt: str) -> str:
+        """根据 prompt 关键词生成 mock 结果总结。"""
+        if '"summary_type": "DENIED"' in prompt:
+            summary = {
+                "final_answer": "任务没有执行，因为权限检查未通过。请确认运行模式或工具风险等级后重试。",
+                "summary_type": "DENIED",
+                "next_action": "切换到允许的运行模式或选择低风险工具。",
+            }
+        elif '"summary_type": "NO_TOOL"' in prompt:
+            summary = {
+                "final_answer": "当前没有可用工具可以处理这个请求，请先注册合适的工具或调整输入描述。",
+                "summary_type": "NO_TOOL",
+                "next_action": "注册工具或重新描述需求。",
+            }
+        elif '"summary_type": "FAILED"' in prompt:
+            summary = {
+                "final_answer": "工具执行失败，请查看 stderr、error_message 和任务事件获取具体原因。",
+                "summary_type": "FAILED",
+                "next_action": "查看工具调用日志后重试。",
+            }
+        else:
+            summary = {
+                "final_answer": "任务已完成，工具执行结果已经写入任务结果和审计日志。",
+                "summary_type": "SUCCESS",
+                "next_action": "NONE",
+            }
+        return json.dumps(summary, ensure_ascii=False)

@@ -10,9 +10,24 @@ from app.services.tool_registry_service import ToolRegistryService
 class ToolRouterService:
     """根据用户输入和 IntentService 输出选择最合适的工具。
 
-    Day 3 使用规则打分实现 MVP 版路由，不引入 embedding 或 LLM rerank。
+    目前使用规则打分实现的路由，不引入 embedding 或 LLM rerank。
     后续可以在这个服务里扩展语义检索、历史成功率加权和模型重排。
     """
+
+    STOP_TOKENS = {
+        "请",
+        "我",
+        "一个",
+        "一下",
+        "工具",
+        "处理",
+        "问题",
+        "需求",
+        "任务",
+        "帮我",
+        "当前",
+        "没有",
+    }
 
     def __init__(self, tool_registry_service: ToolRegistryService | None = None) -> None:
         """创建工具路由服务。
@@ -56,7 +71,8 @@ class ToolRouterService:
         scored_tools.sort(key=lambda item: item[1], reverse=True)
         selected_tool, score = scored_tools[0]
 
-        if score <= 0:
+        has_intent_signal = bool(suggested_tool_type or self._intent_to_tool_type(intent))
+        if score <= 0 or (score < 2 and not has_intent_signal):
             return ToolRouteResult(
                 selected_tool=None,
                 score=0,
@@ -128,7 +144,11 @@ class ToolRouterService:
 
     def _tokens(self, text: str) -> set[str]:
         """把用户输入拆成用于匹配的 token。"""
-        return set(re.findall(r"[a-zA-Z0-9_\-\u4e00-\u9fff]+", text.lower()))
+        return {
+            token
+            for token in re.findall(r"[a-zA-Z0-9_\-\u4e00-\u9fff]+", text.lower())
+            if token not in self.STOP_TOKENS
+        }
 
     def _build_reason(
         self,

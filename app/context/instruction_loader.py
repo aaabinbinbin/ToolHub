@@ -31,6 +31,9 @@ class InstructionLoader:
             project_root: 项目根目录。不传时使用当前工作目录。
         """
         self.project_root = project_root or Path.cwd()
+        self._cached_path: Path | None = None
+        self._cached_mtime_ns: int | None = None
+        self._cached_content: str | None = None
 
     def load(self) -> str:
         """读取 `TOOLHUB.md` 内容。
@@ -41,4 +44,17 @@ class InstructionLoader:
         instruction_path = self.project_root / "TOOLHUB.md"
         if not instruction_path.exists():
             return DEFAULT_INSTRUCTIONS
-        return instruction_path.read_text(encoding="utf-8")
+
+        mtime_ns = instruction_path.stat().st_mtime_ns
+        if (
+            self._cached_path == instruction_path
+            and self._cached_mtime_ns == mtime_ns
+            and self._cached_content is not None
+        ):
+            return self._cached_content
+
+        content = instruction_path.read_text(encoding="utf-8")
+        self._cached_path = instruction_path
+        self._cached_mtime_ns = mtime_ns
+        self._cached_content = content
+        return content

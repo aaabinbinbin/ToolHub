@@ -10,14 +10,15 @@ from langgraph.graph import END, START, StateGraph
 
 from app.common.config import get_settings
 from app.context.instruction_loader import InstructionLoader
+from app.harness.tool_input_normalizer import ToolInputNormalizer
 from app.llm.intent_service import IntentService
+from app.llm.result_summarizer_service import ResultSummarizerService
 from app.repositories.db import get_connection
 from app.repositories.task_event_repository import TaskEventRepository
 from app.repositories.task_repository import TaskRepository
 from app.schemas.permission import RunMode
 from app.schemas.tool import ToolResponse
 from app.security.permission_engine import PermissionEngine
-from app.harness.tool_input_normalizer import ToolInputNormalizer
 from app.services.tool_router_service import ToolRouterService
 from app.tools.dispatcher import ToolAdapterDispatcher
 
@@ -38,6 +39,7 @@ class HarnessState(TypedDict, total=False):
     permission: dict[str, Any] | None   # 权限检查结果
     tool_input: dict[str, Any]          # 传递给工具的参数
     tool_result: dict[str, Any] | None  # 工具执行结果
+    summary: dict[str, Any]             # LLM 生成的最终用户答案
     final_status: str                   # 最终状态（SUCCESS/FAILED/DENIED等）
     error_message: str | None           #  错误信息
 
@@ -46,8 +48,8 @@ class AgentHarnessWorkflow:
     """ Agent Harness 工作流。
 
     当前实现一条线性 LangGraph 链路：
-    load_instructions -> understand_intent -> select_tool -> check_permission -> execute_tool。
-    后面 会继续补 summarize_result 和多步 Agent loop。
+    load_instructions -> understand_intent -> select_tool -> check_permission -> execute_tool -> summarize_result。
+    后面 会继续补 多步 Agent loop。
     """
 
     def __init__(self) -> None:
@@ -57,6 +59,7 @@ class AgentHarnessWorkflow:
         self.permission_engine = PermissionEngine() # 权限检查
         self.dispatcher = ToolAdapterDispatcher() # 分发并执行工具
         self.tool_input_normalizer = ToolInputNormalizer() # 归一化 LLM 生成的工具参数
+        self.result_summarizer = ResultSummarizerService() # 总结工具结果并生成最终答案
 
     def run(self, task: dict[str, Any]) -> HarnessState:
         """用 PostgresSaver checkpoint 执行一次 LangGraph workflow。"""
@@ -91,6 +94,7 @@ class AgentHarnessWorkflow:
         graph.add_node("select_tool", self._wrap_node("select_tool", self._select_tool))
         graph.add_node("check_permission", self._wrap_node("check_permission", self._check_permission))
         graph.add_node("execute_tool", self._wrap_node("execute_tool", self._execute_tool))
+        graph.add_node("summarize_result", self._wrap_node("summarize_result", self._summarize_result))
 
         # 边的连接
         graph.add_edge(START, "load_instructions")
@@ -98,7 +102,8 @@ class AgentHarnessWorkflow:
         graph.add_edge("understand_intent", "select_tool")
         graph.add_edge("select_tool", "check_permission")
         graph.add_edge("check_permission", "execute_tool")
-        graph.add_edge("execute_tool", END)
+        graph.add_edge("execute_tool", "summarize_result")
+        graph.add_edge("summarize_result", END)
         return graph
 
     def _load_instructions(self, state: HarnessState) -> dict[str, Any]:
@@ -244,6 +249,30 @@ class AgentHarnessWorkflow:
             "final_status": "SUCCESS" if result.success else "FAILED",
             "error_message": result.error_message,
         }
+
+    def _summarize_result(self, state: HarnessState) -> dict[str, Any]:
+        """结果总结节点，把结构化执行结果转换为用户可读 final_answer。"""
+        summary = self.result_summarizer.summarize(
+            user_input=state["user_input"],
+            status=state.get("final_status", "FAILED"),
+            intent=state.get("intent"),
+            route=state.get("route"),
+            permission=state.get("permission"),
+            tool_input=state.get("tool_input"),
+            tool_result=state.get("tool_result"),
+            task_id=UUID(state["task_id"]),
+            run_id=UUID(state["run_id"]),
+            trace_id=UUID(state["trace_id"]),
+        )
+        payload = summary.model_dump(mode="json")
+        self._record_event(
+            state,
+            event_type="RESULT_SUMMARIZED",
+            step="summarize_result",
+            message="已生成最终答案。",
+            payload=payload,
+        )
+        return {"summary": payload}
 
     def _selected_tool_from_state(self, state: HarnessState) -> ToolResponse | None:
         """从嵌套的路由数据中提取工具对象"""

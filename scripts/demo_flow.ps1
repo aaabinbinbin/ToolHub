@@ -32,59 +32,16 @@ function Invoke-Json {
 Write-Step "初始化 PostgreSQL 表"
 & .\.venv\Scripts\python.exe .\scripts\init_db.py
 
+Write-Step "注册或复用四类 demo 工具"
+& .\.venv\Scripts\python.exe .\scripts\seed_demo_tools.py
+
 Write-Step "检查 API 健康状态"
 $health = Invoke-RestMethod "$ApiBaseUrl/health"
 Write-Host "health.status = $($health.status)"
 
-Write-Step "注册或复用 demo CLI 工具"
-$cliToolBody = @{
-    name = "demo-git-status-cli"
-    description = "Demo CLI 工具：查看 git status"
-    tool_type = "CLI"
-    endpoint = "cli://git/status-short"
-    version = "1.0.0"
-    tags = @("git", "status", "cli", "demo")
-    risk_level = "MEDIUM"
-}
-
-try {
-    $cliTool = Invoke-Json -Method "POST" -Uri "$ApiBaseUrl/api/tools/register" -Body $cliToolBody
-    Write-Host "registered CLI tool: $($cliTool.id)"
-}
-catch {
-    if ($_.Exception.Response.StatusCode.value__ -ne 409) {
-        throw
-    }
-    $existing = Invoke-RestMethod "$ApiBaseUrl/api/tools/search?q=demo-git-status-cli"
-    Write-Host "CLI tool already exists, found $($existing.total) matching item(s)."
-}
-
-Write-Step "注册或复用 demo Sandbox 工具"
-$sandboxToolBody = @{
-    name = "demo-python-sandbox"
-    description = "Demo Sandbox 工具：执行 Python 代码"
-    tool_type = "SANDBOX"
-    endpoint = "python"
-    version = "1.0.0"
-    tags = @("python", "sandbox", "demo")
-    risk_level = "HIGH"
-}
-
-try {
-    $sandboxTool = Invoke-Json -Method "POST" -Uri "$ApiBaseUrl/api/tools/register" -Body $sandboxToolBody
-    Write-Host "registered Sandbox tool: $($sandboxTool.id)"
-}
-catch {
-    if ($_.Exception.Response.StatusCode.value__ -ne 409) {
-        throw
-    }
-    $existing = Invoke-RestMethod "$ApiBaseUrl/api/tools/search?q=demo-python-sandbox"
-    Write-Host "Sandbox tool already exists, found $($existing.total) matching item(s)."
-}
-
 Write-Step "提交后台任务"
 $taskRequest = @{
-    user_input = "请查看 git status"
+    user_input = "请使用 toolhub-demo-cli-git-status 查看 git status"
     run_mode = "SAFE_EXECUTE"
     priority = "default"
 }

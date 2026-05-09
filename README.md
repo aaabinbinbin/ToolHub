@@ -2,6 +2,47 @@
 
 ToolHub 是一个面向 CLI / IDE Agent 的 Agent Harness 平台。它把用户输入转换成结构化意图，完成工具路由、权限检查、安全执行、后台任务调度、状态检查点、结果总结和可观测性展示。
 
+## 当前基线状态
+
+当前项目已经完成 Agent Harness MVP 的主链路，可以作为后续完善的基线：
+
+- API 服务可以启动，并提供 `/health` 和 Swagger 文档
+- PostgreSQL / Redis 可通过 Docker Compose 作为本地运行依赖
+- Tool Registry 支持 MCP / HTTP / CLI / Sandbox 四类工具元数据
+- IntentService 可以将自然语言任务转换为结构化 intent 和 tool_input
+- ToolRouter 可以根据 intent、工具类型、名称、标签和描述选择候选工具
+- PermissionEngine 支持 `PLAN_ONLY`、`SAFE_EXECUTE`、`FULL_EXECUTE` 三种 run mode
+- CLI / Sandbox 工具默认通过 DockerSandbox 隔离执行
+- Celery worker 可以异步执行后台任务
+- LangGraph workflow 可以串联 instruction loading、intent、routing、permission、execution、summary
+- PostgreSQL 中会记录 `tasks`、`task_events`、`tool_calls`、`llm_calls`、`sandbox_executions`
+- Streamlit Dashboard 可以查看任务、事件、工具调用、LLM 调用和沙箱执行日志
+- 当前测试基线：`13 passed`
+
+当前仍然是 MVP，不应包装成生产级平台。主要缺口：
+
+- MCP Adapter 仍以 demo 能力为主，还没有完整 MCP client / tool sync
+- Harness 仍是单步线性链路，还没有多步 Agent loop
+- CLI policy 仍是代码内置规则，还没有配置化策略包
+- 权限系统仍以 `risk_level + run_mode` 为主，还没有审批流
+- Dashboard 偏观测表格，还不是完整 Console
+- Demo 覆盖面偏窄，需要补齐 MCP / HTTP / CLI / Sandbox 四类稳定链路
+
+## 短期完善目标
+
+后续优先把项目从“能跑通的 MVP”完善成“可展示、可试用的 Agent Tool Runtime / Harness MVP”：
+
+1. 补齐四类真实样例工具：MCP、HTTP、CLI、Sandbox。
+2. 实现真实 MCP client，支持同步 MCP tools 和调用真实 MCP tool。
+3. 将 CLI policy 从硬编码改为 YAML / JSON 配置。
+4. 升级 ToolRouter，使其理解工具 `input_schema` 并能解释选择原因。
+5. 增加多步 Agent Harness，支持连续调用多个工具并记录 observations。
+6. 增加 `ALLOW / ASK / DENY` 权限决策和高风险审批流。
+7. 将 Dashboard 增强为基础 Console，支持工具管理、任务提交、trace 查看和审批处理。
+8. 补充测试、评估集和稳定 Demo，作为简历和面试展示素材。
+
+详细分步方案见 [docs/toolhub_improvement_plan.md](docs/toolhub_improvement_plan.md)。
+
 ## 核心能力
 
 - Tool Registry：注册、搜索、启用、禁用和删除 MCP / HTTP / CLI / Sandbox 工具
@@ -106,6 +147,23 @@ http://localhost:18501
 
 ## Demo
 
+先注册或复用四类 demo 工具：
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\seed_demo_tools.py
+```
+
+当前 seed 会准备以下 canonical demo 工具：
+
+| 工具名 | 类型 | 当前用途 |
+|---|---|---|
+| `toolhub-demo-mcp-calculator` | MCP | calculator demo，后续 Step 3 替换为真实 MCP client |
+| `toolhub-demo-http-echo` | HTTP | HTTPToolAdapter 内置 mock echo |
+| `toolhub-demo-http-public-api` | HTTP | 通过 SSRF 防护调用 public HTTPS echo API |
+| `toolhub-demo-cli-git-status` | CLI | DockerSandbox 内执行安全 `git status --short` |
+| `toolhub-demo-cli-git-diff` | CLI | DockerSandbox 内执行安全 `git diff` |
+| `toolhub-demo-python-sandbox` | SANDBOX | DockerSandbox 内执行 Python 代码 |
+
 运行完整 demo：
 
 ```powershell
@@ -115,7 +173,7 @@ http://localhost:18501
 脚本会完成：
 
 - 初始化数据库
-- 注册 Day9/10 示例 CLI 和 Sandbox 工具
+- 注册或复用四类 canonical demo 工具
 - 提交 `git status` 后台任务
 - 轮询任务状态
 - 打印 `final_answer`
@@ -128,6 +186,36 @@ http://localhost:18501
 ```http
 POST /api/tools/register
 ```
+
+### 同步 MCP 工具
+
+ToolHub 现在提供 MCP client 封装，可以将 MCP server 暴露的 tools 同步到 Tool Registry。
+
+同步 mock calculator：
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\sync_mcp_tools.py --mcp-url mock://calculator --transport mock --name-prefix synced-demo --tag demo
+```
+
+同步真实 MCP server 时使用对应 transport：
+
+```powershell
+# Streamable HTTP
+.\.venv\Scripts\python.exe .\scripts\sync_mcp_tools.py --mcp-url https://example.com/mcp --transport streamable-http --name-prefix remote
+
+# SSE
+.\.venv\Scripts\python.exe .\scripts\sync_mcp_tools.py --mcp-url https://example.com/sse --transport sse --name-prefix remote
+
+# stdio: command 放在 stdio:// 后，参数用 args 重复传入
+.\.venv\Scripts\python.exe .\scripts\sync_mcp_tools.py --mcp-url "stdio://python?args=-m&args=my_mcp_server" --transport stdio --name-prefix local
+```
+
+同步后的 MCP tool 会使用：
+
+- `mcp_url` 保存 server 地址
+- `transport` 保存连接方式
+- `endpoint` 保存远端 MCP tool name
+- `input_schema` / `output_schema` 保存远端 schema
 
 ### 搜索工具
 
@@ -211,4 +299,3 @@ Dashboard 会从这些表中展示完整链路。
 - ToolInputNormalizer
 - ResultSummarizer fallback
 - ToolRouter 弱匹配 NO_TOOL
-

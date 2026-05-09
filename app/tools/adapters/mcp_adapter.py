@@ -5,13 +5,14 @@ from uuid import UUID
 
 from app.schemas.tool import ToolResponse
 from app.tools.adapters.base import BaseToolAdapter
+from app.tools.mcp_client import MCPClient
 
 
 class MCPToolAdapter(BaseToolAdapter):
-    """MCP 工具适配器。
+    """MCP 工具适配器，通过 MCPClient 调用真实 MCP 服务上的工具。"""
 
-    目前 先提供 calculator demo 能力；真实 MCP 协议调用后续接入 MCP client。
-    """
+    def __init__(self, client: MCPClient | None = None) -> None:
+        self.client = client or MCPClient()
 
     def call(
         self,
@@ -22,16 +23,34 @@ class MCPToolAdapter(BaseToolAdapter):
         run_id: UUID | None = None,
         trace_id: UUID | None = None,
     ) -> dict[str, Any]:
-        if "calculator" not in tool.name.lower():
-            raise NotImplementedError("MCP adapter currently supports calculator demo only")
+        if not tool.mcp_url:
+            raise ValueError("MCP tool requires mcp_url")
 
-        expression = str(tool_input.get("expression") or tool_input.get("query") or "")
-        if not expression:
-            raise ValueError("calculator MCP demo requires expression")
+        remote_tool_name = str(
+            tool_input.get("_mcp_tool_name")
+            or tool_input.get("tool_name")
+            or tool.endpoint
+            or tool.name
+        )
+        timeout_seconds = float(tool_input.get("timeout", 30))
+        arguments = self._arguments_from_tool_input(tool_input)
 
-        allowed_chars = set("0123456789+-*/(). %")
-        if any(char not in allowed_chars for char in expression):
-            raise ValueError("calculator expression contains unsupported characters")
+        return self.client.call_tool(
+            mcp_url=tool.mcp_url,
+            transport=tool.transport,
+            tool_name=remote_tool_name,
+            arguments=arguments,
+            timeout_seconds=timeout_seconds,
+        )
 
-        result = eval(expression, {"__builtins__": {}}, {})
-        return {"expression": expression, "result": result}
+    def _arguments_from_tool_input(self, tool_input: dict[str, Any]) -> dict[str, Any]:
+        explicit_arguments = tool_input.get("arguments")
+        if isinstance(explicit_arguments, dict):
+            return explicit_arguments
+
+        control_keys = {"_mcp_tool_name", "tool_name", "arguments", "timeout"}
+        return {
+            key: value
+            for key, value in tool_input.items()
+            if key not in control_keys
+        }

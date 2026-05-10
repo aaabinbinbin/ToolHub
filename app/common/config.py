@@ -32,6 +32,10 @@ class Settings:
     sandbox_pids_limit: int = 64
     sandbox_timeout_seconds: int = 10
     sandbox_network_disabled: bool = True
+    sandbox_read_only: bool = True
+    sandbox_no_new_privileges: bool = True
+    sandbox_cap_drop_all: bool = True
+    sandbox_tmpfs_size: str = "64m"
     cli_policy_path: str = "config/cli_policy.json"
     cli_policy_dir: str = "config/cli_policies"
     http_timeout_seconds: float = 10
@@ -98,6 +102,19 @@ def get_settings() -> Settings:
             "SANDBOX_NETWORK_DISABLED",
             Settings.sandbox_network_disabled,
         ),
+        sandbox_read_only=_env_bool(
+            "SANDBOX_READ_ONLY",
+            Settings.sandbox_read_only,
+        ),
+        sandbox_no_new_privileges=_env_bool(
+            "SANDBOX_NO_NEW_PRIVILEGES",
+            Settings.sandbox_no_new_privileges,
+        ),
+        sandbox_cap_drop_all=_env_bool(
+            "SANDBOX_CAP_DROP_ALL",
+            Settings.sandbox_cap_drop_all,
+        ),
+        sandbox_tmpfs_size=os.getenv("SANDBOX_TMPFS_SIZE", Settings.sandbox_tmpfs_size),
         cli_policy_path=os.getenv("CLI_POLICY_PATH", Settings.cli_policy_path),
         cli_policy_dir=os.getenv("CLI_POLICY_DIR", Settings.cli_policy_dir),
         http_timeout_seconds=float(

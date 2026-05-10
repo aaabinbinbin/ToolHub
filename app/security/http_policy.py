@@ -29,12 +29,24 @@ class HTTPPolicy:
         "proxy-authorization",
         "set-cookie", # 服务器设置的 Cookie
     }
+    # 云厂商元数据 hostname，防止 DNS 解析绕过 IP 拦截。
+    METADATA_HOSTNAMES = {
+        "metadata.google.internal",       # GCP 元数据
+        "169.254.169.254",                # AWS / Azure / 通用 link-local 元数据 IP 作 hostname 使用
+        "metadata.tencentyun.com",        # 腾讯云元数据
+        "100.100.100.200",                # 阿里云元数据
+    }
+    # 显式拦截的元数据 IP 地址（is_link_local 覆盖 169.254.x.x 但不包括所有厂商地址）。
+    METADATA_IPS = {
+        "169.254.169.254",                # AWS / Azure / GCP 元数据
+        "100.100.100.200",                # 阿里云元数据
+    }
 
     def __init__(self, allowed_ports: tuple[int, ...]) -> None:
         self.allowed_ports = allowed_ports # 只允许标准 HTTP/HTTPS 端口
 
     def validate_url(self, url: str) -> None:
-        """校验 URL scheme、认证信息、端口和 DNS 解析后的 IP。"""
+        """校验 URL scheme、hostname、端口和 DNS 解析后的 IP。"""
         parsed = urlparse(url)
         # 协议检查
         if parsed.scheme not in {"http", "https"}:
@@ -45,6 +57,10 @@ class HTTPPolicy:
         # 认证信息检查 【防止硬编码凭证泄露、避免凭证出现在日志中、强制使用 Header 方式传递认证（可被审计）】
         if parsed.username or parsed.password:
             raise ValueError("HTTP tool endpoint must not include credentials")
+
+        # 云厂商元数据 hostname 检查（先于 DNS 解析，防 DNS rebinding）
+        if parsed.hostname.lower() in self.METADATA_HOSTNAMES:
+            raise ValueError(f"HTTP tool target is a cloud metadata endpoint: {parsed.hostname}")
 
         # 端口检查
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
@@ -96,6 +112,9 @@ class HTTPPolicy:
         return addresses
 
     def _validate_ip(self, ip_address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
+        # 先做显式元数据 IP 检查（is_link_local 能覆盖 169.254.x.x 但不能覆盖 100.100.100.200 等）
+        if str(ip_address) in self.METADATA_IPS:
+            raise ValueError(f"HTTP tool target is a cloud metadata IP: {ip_address}")
         if (
             ip_address.is_private           # 私有地址（内网）
             or ip_address.is_loopback       # 回环地址（127.0.0.1）

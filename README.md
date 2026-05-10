@@ -10,37 +10,60 @@ ToolHub 是一个面向 CLI / IDE Agent 的 Agent Tool Runtime / Agent Harness M
 
 ## 当前基线状态
 
-当前项目已经完成 Agent Harness MVP 的主链路，可以作为后续完善的基线：
+### 已完成并可演示
 
-- API 服务可以启动，并提供 `/health` 和 Swagger 文档
-- PostgreSQL / Redis 可通过 Docker Compose 作为本地运行依赖
+- API 服务可启动，提供 `/health` / `/health/ready` 和 Swagger 文档
+- PostgreSQL / Redis 通过 Docker Compose 作为本地运行依赖
 - 数据库结构通过 Alembic migration 管理
-- Tool Registry 支持 MCP / HTTP / CLI / Sandbox 四类工具元数据
+- Tool Registry 支持 MCP / HTTP / CLI / Sandbox 四类工具元数据注册
 - 支持从 OpenAPI spec 导入 HTTP 工具
-- 工具注册会写入 `tool_versions` 版本快照，并根据调用历史刷新质量指标
-- IntentService 可以将自然语言任务转换为结构化 intent 和 tool_input
-- ToolRouter 可以输出 top-k candidates，并融合 intent、工具类型、schema、关键词、健康状态、质量指标和可选 LLM rerank 做解释型路由
-- PermissionEngine 支持 `PLAN_ONLY`、`SAFE_EXECUTE`、`FULL_EXECUTE` 三种 run mode
-- HIGH 风险工具在 `SAFE_EXECUTE` 下会进入 `WAITING_APPROVAL`，可通过审批 API 继续或拒绝
-- CLI / Sandbox 工具默认通过 DockerSandbox 隔离执行，Sandbox 支持 Python / Node.js 运行时骨架
-- Celery worker 可以异步执行后台任务
-- LangGraph workflow 可以串联 instruction loading、intent、planning、routing、permission、execution、observation、summary
-- Harness 支持 LLM planner 优先的多步执行；LLM 不可用时会退回确定性规则
-- Harness 支持任务级 `max_steps`、`max_retries`、`timeout_seconds`，并支持失败后基于 observation 有边界地修正参数重试
-- 任务支持取消，工具调用支持 replay，方便复现失败输入和调试工具行为
-- Trace API 可以按 `trace_id` 聚合 task、events、tool_calls、llm_calls、sandbox_executions 和 approvals
-- `PLAN_ONLY` 模式只生成计划和总结，不会执行工具
-- PostgreSQL 中会记录 `tasks`、`task_events`、`tool_calls`、`llm_calls`、`sandbox_executions`
-- Streamlit Dashboard Console 可以查看 Overview、Trace、Task、Routing、Replay 和原始审计表
-- 当前测试基线：`55 passed`
+- 工具注册写入 `tool_versions` 版本快照，根据调用历史刷新质量指标
+- LLM IntentService：自然语言 → 结构化 intent + tool_input
+- ToolRouter：top-k 候选 + schema 门禁 + keyword/type/health/quality 打分
+- ToolRouter 可选 LLM rerank（只做排序建议，不绕过 schema/permission）
+- PermissionEngine：PLAN_ONLY / SAFE_EXECUTE / FULL_EXECUTE 三种 run_mode
+- HIGH 风险工具在 SAFE_EXECUTE 下进入 WAITING_APPROVAL → 审批 API → 继续或拒绝
+- CLI / Sandbox 工具通过 DockerSandbox 隔离执行（read_only / no_new_privileges / cap_drop ALL / tmpfs）
+- Sandbox 支持 Python / Node.js 运行时骨架
+- Celery worker 异步执行后台任务
+- LangGraph workflow 串联 instruction → intent → plan → route → permission → execute → observe → decide → summarize
+- 支持 LLM planner 优先的多步执行，LLM 不可用时退回确定性规则
+- 任务级 max_steps / max_retries / timeout_seconds 配置
+- 失败后 bounded retry + HarnessReplanner 基于 observation 修正 tool_input
+- 任务取消（cancel API → 节点边界停止）
+- 工具调用 replay（source_tool_call_id / replay_tool_call_id / override_input）
+- PLAN_ONLY 模式：只生成计划和总结，不进入工具路由和执行节点
+- Trace API 按 trace_id 聚合 tasks/events/tool_calls/llm_calls/sandbox_executions/approvals/timeline/metrics
+- Streamlit Dashboard Console：Overview / Trace / Task / Routing / Replay / Raw Tables
+- 审计表：tasks / task_events / tool_calls / llm_calls / sandbox_executions
+- Secret 入库前统一脱敏（PayloadRedactor）
+- 测试基线：104 passed
 
-当前仍然是 MVP，不应包装成生产级平台。项目边界建议这样理解：
+### MVP 骨架能力（已具备主链路，但未完整打磨）
 
-- 已经具备完整 Agent Harness 主链路：注册、路由、权限、执行、审计、trace、replay 和 Console。
-- 当前不是生产级 SaaS，也不建议宣传成企业级多租户平台。
-- Dashboard 是功能型 Console，不是独立前端产品。
-- ToolRouter 已具备 top-k、schema-aware、quality-aware 和 LLM rerank 接口，但 embedding / pgvector 语义召回还没有作为强依赖接入。
-- 审批和治理模型已具备骨架，但真实登录、完整 RBAC、组织级权限体系仍属于后续增强项。
+- HTTP Adapter：SSRF 防护 / 重定向校验 / 危险头拦截 / metadata IP 拦截 / 大响应截断
+- CLI Adapter：规则 ID + 结构化参数（配置化 JSON rule pack，禁止自由 command）
+- MCP Adapter：已接入官方 mcp SDK，支持 mock/stdio/sse/streamable-http transport
+- MCP Sync Service：从 MCP server 同步工具列表到 Tool Registry
+- 审批流：create → approve / reject → re-queue 或 DENIED
+- 多维 tool_permissions 策略表（已建表，PermissionEngine 优先读 policy 再退回内置规则）
+- user_id / workspace_id 已存在于 tasks / events / tool_calls / llm_calls 表中
+- 路由评估脚本：52 条 case，输出 top1_accuracy / top3_recall / schema_reject_accuracy / dangerous_tool_avoidance_rate
+
+### 后续增强（未实现，不应在 README 中写成已完成）
+
+- pgvector / embedding 语义召回（当前 ToolRouter 仍基于规则打分 + 可选 LLM rerank）
+- 真实登录 / RBAC / 组织级 workspace 权限
+- SSE / WebSocket 实时任务事件流
+- Checkpoint 级 task resume（当前支持 tool_call 级 replay）
+- 独立前端（当前为 Streamlit Console，不是生产级 UI）
+- 完整 JSON Schema 校验器（当前为项目所需子集）
+- MCP server 鉴权（OAuth / header auth）
+- Prometheus / Grafana 指标
+- 审批过期 / 审批范围 / 审批人权限校验
+
+**项目定位**：Agent Tool Runtime / Agent Harness MVP，不是生产级 SaaS 或企业级多租户平台。
+**Dashboard 定位**：功能型 Console，不是独立前端产品。
 
 ## 短期完善目标
 
@@ -515,7 +538,7 @@ Dashboard 会从这些表中展示完整链路。
 ## 测试
 
 ```bash
-.\.venv\Scripts\pytest.exe
+uv run pytest -q
 ```
 
 当前测试覆盖：
@@ -525,3 +548,28 @@ Dashboard 会从这些表中展示完整链路。
 - ToolInputNormalizer
 - ResultSummarizer fallback
 - ToolRouter 弱匹配 NO_TOOL
+- PermissionEngine ASK / ALLOW / DENY
+- Schema validation service
+- Step planner LLM / fallback
+- MCP client / adapter / sync
+- CLI policy 配置化加载
+- Sandbox adapter Python / Node.js
+- OpenAPI import
+- Tool versions & quality metrics
+- Config & LLM mock
+- Secret redaction
+- Governance schema
+- Runtime controls (cancel / retry)
+- Tool call replay
+- Trace service aggregation
+- Task cancel service
+- Task submit run_config
+- Approval resume
+- PLAN_ONLY mode
+- Harness status transition
+- Tool rerank service
+- HTTP adapter security
+- Sandbox security
+- Replanner schema recovery
+- Final demo flow (permission matrix)
+

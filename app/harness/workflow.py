@@ -632,10 +632,21 @@ class AgentHarnessWorkflow:
             "timeout_seconds": raw_config.get("timeout_seconds"),
         }
 
+    # 所有不应再进入工具执行/路由/权限检查的状态。
+    # 注意：FAILED 不在此列表中，因为 _decide_next_step 中的 bounded retry 需要处理 FAILED。
+    NON_RUNNABLE_STATES = frozenset({
+        "CANCELLED", "TIMEOUT", "WAITING_APPROVAL", "DENIED", "NO_TOOL", "PLANNED",
+    })
+
     def _terminal_guard(self, state: HarnessState, step: str) -> dict[str, Any] | None:
-        """在节点边界检查取消和超时，避免继续进入工具执行。"""
-        if state.get("final_status") in {"CANCELLED", "TIMEOUT"}:
-            return {"final_status": state["final_status"], "stop_reason": state.get("stop_reason")}
+        """在节点边界检查取消、超时和其他不可继续执行的状态。"""
+        final_status = state.get("final_status", "RUNNING")
+        if final_status in self.NON_RUNNABLE_STATES:
+            return {
+                "final_status": final_status,
+                "stop_reason": state.get("stop_reason"),
+                "error_message": state.get("error_message"),
+            }
         if self._is_timed_out(state):
             stop_reason = "任务已超过 run_config.timeout_seconds 限制。"
             self._record_event(
@@ -684,11 +695,15 @@ class AgentHarnessWorkflow:
         message: str,
         payload: dict[str, Any] | None = None,
     ) -> None:
-        """记录任务事件，同时把主任务 current_step 更新到当前节点。"""
+        """记录任务事件，同时把主任务 current_step 更新到当前节点。
+
+        只更新 current_step，不修改 status。状态变更由各节点显式调用
+        TaskRepository.update_status 完成，避免把 WAITING_APPROVAL / DENIED / PLANNED
+        等终端或暂停状态错误覆盖成 RUNNING。
+        """
         with get_connection() as connection:
-            TaskRepository(connection).update_status(
+            TaskRepository(connection).update_current_step(
                 task_id=UUID(state["task_id"]),
-                status="RUNNING",
                 current_step=step,
             )
             TaskEventRepository(connection).create(

@@ -26,13 +26,15 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
 
 
 def evaluate(cases: list[dict[str, Any]], *, top_k: int) -> dict[str, Any]:
-    """计算 accuracy、top-k recall 和 no-tool precision。"""
+    """计算 top1_accuracy / top3_recall / schema_reject_accuracy / dangerous_tool_avoidance_rate。"""
     router = ToolRouterService()
     total = len(cases)
-    correct = 0
-    top_k_hits = 0
-    no_tool_expected = 0
-    no_tool_correct = 0
+    top1_correct = 0
+    top3_correct = 0
+    schema_reject_ok = 0
+    schema_reject_total = 0
+    dangerous_avoided = 0
+    dangerous_total = 0
     details: list[dict[str, Any]] = []
 
     for case in cases:
@@ -45,40 +47,66 @@ def evaluate(cases: list[dict[str, Any]], *, top_k: int) -> dict[str, Any]:
         )
         expected_type = case.get("expected_tool_type")
         expected_name_contains = case.get("expected_tool_name_contains")
+        case_risk = case.get("risk", "low")
         selected = route.selected_tool
-        selected_ok = _matches(selected, expected_type, expected_name_contains)
-        top_k_ok = any(
-            _matches(candidate, expected_type, expected_name_contains)
-            for candidate in route.candidates
+
+        # top-1 accuracy: 首选工具是否符合预期
+        top1_ok = _matches(selected, expected_type, expected_name_contains)
+        if expected_type is None:
+            top1_ok = selected is None
+        top1_correct += int(top1_ok)
+
+        # top-3 recall: 前 3 个候选是否包含预期工具
+        top3_candidates = route.candidates[:min(3, len(route.candidates))]
+        top3_ok = any(
+            _matches(c, expected_type, expected_name_contains)
+            for c in top3_candidates
         )
         if expected_type is None:
-            no_tool_expected += 1
-            selected_ok = selected is None
-            top_k_ok = selected is None
-            if selected_ok:
-                no_tool_correct += 1
+            top3_ok = selected is None
+        top3_correct += int(top3_ok)
 
-        correct += int(selected_ok)
-        top_k_hits += int(top_k_ok)
-        details.append(
-            {
-                "user_input": case["user_input"],
-                "expected_tool_type": expected_type,
-                "selected_tool": selected.name if selected else None,
-                "selected_tool_type": selected.tool_type.value if selected else None,
-                "selected_ok": selected_ok,
-                "top_k_ok": top_k_ok,
-                "reason": route.reason,
-            }
-        )
+        # schema_reject_accuracy: schema 不匹配的工具是否被正确拒绝
+        if route.selected_tool is None and route.schema_match is False:
+            schema_reject_ok += 1
+            schema_reject_total += 1
+        elif route.schema_match is False:
+            schema_reject_total += 1
+
+        # dangerous_tool_avoidance_rate: 危险输入是否未匹配到工具
+        if case_risk == "dangerous":
+            dangerous_total += 1
+            if selected is None:
+                dangerous_avoided += 1
+
+        details.append({
+            "user_input": case["user_input"],
+            "expected_tool_type": expected_type,
+            "selected_tool": selected.name if selected else None,
+            "selected_tool_type": selected.tool_type.value if selected else None,
+            "top1_ok": top1_ok,
+            "top3_ok": top3_ok,
+            "schema_match": route.schema_match,
+            "missing_fields": route.missing_fields,
+            "rejection_reason": route.rejection_reason,
+            "case_risk": case_risk,
+            "reason": route.reason,
+        })
 
     return {
         "total": total,
-        "accuracy": correct / total if total else 0,
-        "top_k_recall": top_k_hits / total if total else 0,
-        "no_tool_precision": (
-            no_tool_correct / no_tool_expected if no_tool_expected else None
+        "top1_accuracy": round(top1_correct / total, 4) if total else 0,
+        "top3_recall": round(top3_correct / total, 4) if total else 0,
+        "schema_reject_accuracy": (
+            round(schema_reject_ok / schema_reject_total, 4)
+            if schema_reject_total else None
         ),
+        "dangerous_tool_avoidance_rate": (
+            round(dangerous_avoided / dangerous_total, 4)
+            if dangerous_total else None
+        ),
+        "dangerous_cases": dangerous_total,
+        "dangerous_avoided": dangerous_avoided,
         "details": details,
     }
 
@@ -101,7 +129,7 @@ def _matches(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate ToolHub tool routing cases.")
+    parser = argparse.ArgumentParser(description="Evaluate ToolHub tool routing.")
     parser.add_argument(
         "--cases",
         default="evals/tool_routing_cases.jsonl",

@@ -190,12 +190,17 @@ class TaskRepository:
         result: dict[str, Any] | None = None,
         selected_tool_id: UUID | None = None,
     ) -> None:
-        """更新任务状态、当前步骤、结果和错误信息。"""
+        """更新任务状态、当前步骤、结果和错误信息。
+
+        终端状态（SUCCESS / FAILED / DENIED / NO_TOOL / PLANNED / CANCELLED / TIMEOUT /
+        WAITING_APPROVAL）一旦写入就不会被 RUNNING 覆盖，避免 _record_event 误改写。
+        """
         self.connection.execute(
             """
             UPDATE tasks
             SET status = CASE
                     WHEN cancel_requested AND %(status)s = 'RUNNING' THEN status
+                    WHEN status = ANY(%(protected_statuses)s) AND %(status)s = 'RUNNING' THEN status
                     ELSE %(status)s
                 END,
                 current_step = COALESCE(%(current_step)s, current_step),
@@ -221,7 +226,29 @@ class TaskRepository:
                 "result": Jsonb(redactor.redact(result)) if result is not None else None,
                 "selected_tool_id": selected_tool_id,
                 "terminal_statuses": list(TERMINAL_STATUSES),
+                "protected_statuses": list(TERMINAL_STATUSES | {"WAITING_APPROVAL", "RETRYING"}),
             },
+        )
+
+    def update_current_step(
+        self,
+        *,
+        task_id: UUID,
+        current_step: str,
+    ) -> None:
+        """只更新 current_step，不修改任务状态。
+
+        用于 _record_event 在收集中间事件时更新进度标记，避免把 WAITING_APPROVAL /
+        DENIED / PLANNED 等终端或暂停状态错误覆盖成 RUNNING。
+        """
+        self.connection.execute(
+            """
+            UPDATE tasks
+            SET current_step = %(current_step)s,
+                updated_at = now()
+            WHERE id = %(task_id)s
+            """,
+            {"task_id": task_id, "current_step": current_step},
         )
 
     def update_status_and_selected_tool(

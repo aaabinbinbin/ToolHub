@@ -25,17 +25,45 @@ class DockerSandbox:
         self.command_policy = CommandPolicy()
 
     def create(self, request: SandboxRunRequest):
-        """创建受资源限制的容器，但暂不启动。"""
+        """创建受资源限制和强安全策略的容器，但暂不启动。
+
+        安全默认值：
+        - read_only 根文件系统，只允许显式声明的 volume 写入
+        - no_new_privileges 禁止 setuid/setgid 提权
+        - cap_drop ALL 移除所有 capabilities
+        - /tmp 挂载为 tmpfs 避免磁盘 IO 放大
+        - pids_limit 限制 fork bomb
+        - 网络默认关闭
+        """
         self.command_policy.validate(request.command)
+        # 安全加固：只读根文件系统 + 禁止提权 + 移除全部 capabilities
+        security_opts = []
+        if self.settings.sandbox_no_new_privileges:
+            security_opts.append("no-new-privileges:true")
+        tmpfs_mounts: dict[str, str] = {}
+        if self.settings.sandbox_tmpfs_size:
+            tmpfs_mounts["/tmp"] = f"size={self.settings.sandbox_tmpfs_size},noexec,nosuid"
+        # 约束 artifact 路径：只允许 /workspace/output 下的声明路径
+        if request.artifact_paths:
+            for artifact_path in request.artifact_paths:
+                normalized = artifact_path.lstrip("/")
+                if not normalized.startswith("workspace/output"):
+                    raise ValueError(
+                        f"artifact_path 必须位于 /workspace/output 内，拒绝: {artifact_path}"
+                    )
         return self.client.containers.create(
             image=request.image,
             command=request.command,
             working_dir=request.workdir,
             volumes=request.volumes,
             detach=True,
+            read_only=self.settings.sandbox_read_only,
             mem_limit=request.mem_limit or self.settings.sandbox_mem_limit,
             network_disabled=request.network_disabled,
             pids_limit=request.pids_limit or self.settings.sandbox_pids_limit,
+            security_opt=security_opts if security_opts else None,
+            cap_drop=["ALL"] if self.settings.sandbox_cap_drop_all else None,
+            tmpfs=tmpfs_mounts if tmpfs_mounts else None,
         )
 
     def execute(self, container, timeout_seconds: int) -> tuple[str, str, int | None, str]:

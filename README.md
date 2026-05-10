@@ -37,7 +37,7 @@ ToolHub 是一个面向 CLI / IDE Agent 的 Agent Tool Runtime / Agent Harness M
 - Streamlit Dashboard Console：Overview / Trace / Task / Routing / Replay / Raw Tables
 - 审计表：tasks / task_events / tool_calls / llm_calls / sandbox_executions
 - Secret 入库前统一脱敏（PayloadRedactor）
-- 测试基线：104 passed
+- 测试基线：117 passed
 
 ### MVP 骨架能力（已具备主链路，但未完整打磨）
 
@@ -64,6 +64,24 @@ ToolHub 是一个面向 CLI / IDE Agent 的 Agent Tool Runtime / Agent Harness M
 
 **项目定位**：Agent Tool Runtime / Agent Harness MVP，不是生产级 SaaS 或企业级多租户平台。
 **Dashboard 定位**：功能型 Console，不是独立前端产品。
+
+## Current Limitations（当前局限）
+
+以下能力**尚未实现**，不应在对外介绍中标注为已完成：
+
+| 局限 | 当前状态 | 说明 |
+|---|---|---|
+| **语义路由** | 规则打分 + 可选 LLM rerank | pgvector / embedding 语义召回尚未作为强依赖接入 |
+| **真实 RBAC** | user_id / workspace_id 字段存在 | 缺登录认证、角色绑定、组织级权限 |
+| **生产级沙箱** | Docker SDK + 安全加固 | read_only / no_new_privileges / cap_drop ALL 已启用，但无 gVisor/Firecracker 级隔离 |
+| **实时事件流** | 轮询 | 无 SSE / WebSocket 推送 |
+| **Checkpoint resume** | tool_call 级 replay | 无 LangGraph checkpoint 级恢复 |
+| **独立前端** | Streamlit Console | 非生产级 UI |
+| **完整 JSON Schema** | 项目所需子集 | 不支持 oneOf / anyOf / $ref 等 |
+| **审批过期/范围** | 已建表但未接入 | 审批过期时间、审批范围在 Harness 侧未完整衔接 |
+| **MCP 鉴权** | 不支持 | 无 OAuth / header auth |
+
+
 
 ## 短期完善目标
 

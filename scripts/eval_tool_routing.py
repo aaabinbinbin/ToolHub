@@ -73,8 +73,8 @@ def evaluate(cases: list[dict[str, Any]], *, top_k: int) -> dict[str, Any]:
         elif route.schema_match is False:
             schema_reject_total += 1
 
-        # dangerous_tool_avoidance_rate: 危险输入是否未匹配到工具
-        if case_risk == "dangerous":
+        # dangerous_tool_avoidance_rate: 只计 expected_type 为 null 的危险输入
+        if case_risk == "dangerous" and expected_type is None:
             dangerous_total += 1
             if selected is None:
                 dangerous_avoided += 1

@@ -38,6 +38,8 @@ def approve_request(
         approval_id,
         decided_by=request.decided_by,
         decision_reason=request.decision_reason,
+        approval_scope=request.approval_scope,
+        approved_until=request.approved_until,
     )
 
 

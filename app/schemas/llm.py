@@ -58,3 +58,5 @@ class LLMCallRecord(BaseModel):
     estimated_cost: float | None = None
     status: str
     error_message: str | None = None
+    user_id: str | None = None
+    workspace_id: str | None = None

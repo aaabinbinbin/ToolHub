@@ -5,6 +5,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 
 from app.schemas.task import (
+    TaskCancelRequest,
+    TaskCancelResponse,
     TaskEventResponse,
     TaskResponse,
     TaskSubmitRequest,
@@ -38,6 +40,16 @@ def get_task(
     return service.get_task(task_id)
 
 
+@router.post("/{task_id}/cancel", response_model=TaskCancelResponse)
+def cancel_task(
+    task_id: UUID,
+    request: TaskCancelRequest,
+    service: TaskService = Depends(get_task_service),
+) -> TaskCancelResponse:
+    """请求取消任务；运行中的任务会在下一个 Harness 节点边界停止。"""
+    return service.cancel_task(task_id, request)
+
+
 @router.get("/{task_id}/events", response_model=list[TaskEventResponse])
 def get_task_events(
     task_id: UUID,
@@ -45,4 +57,3 @@ def get_task_events(
 ) -> list[TaskEventResponse]:
     """查询任务执行事件。"""
     return service.get_task_events(task_id)
-

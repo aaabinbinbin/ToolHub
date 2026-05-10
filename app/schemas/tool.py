@@ -45,6 +45,9 @@ class ToolRegisterRequest(BaseModel):
     version: str = Field(default="1.0.0", min_length=1) # 版本号，默认 "1.0.0"
     input_schema: dict[str, Any] | None = None # 输入参数 JSON Schema
     output_schema: dict[str, Any] | None = None # 输出结果 JSON Schema
+    metadata: dict[str, Any] = Field(default_factory=dict) # 工具扩展元数据，不保存明文 secret
+    owner_id: str = "local-user" # 工具负责人
+    workspace_id: str = "default" # 工作区
     tags: list[str] = Field(default_factory=list) # 标签列表，默认为空
     risk_level: RiskLevel = RiskLevel.LOW # 风险等级，默认 LOW
 
@@ -73,6 +76,13 @@ class ToolResponse(BaseModel):
     version: str
     input_schema: dict[str, Any] | None
     output_schema: dict[str, Any] | None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    owner_id: str = "local-user"
+    workspace_id: str = "default"
+    schema_hash: str | None = None
+    quality_score: float | None = None
+    success_rate: float | None = None
+    avg_duration_ms: int | None = None
     tags: list[str]
     risk_level: RiskLevel
     status: ToolStatus

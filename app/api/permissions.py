@@ -30,5 +30,11 @@ def check_permission(
     该接口用于单独调试 PermissionEngine，不会写 task_events。
     """
     tool = tool_registry_service.get_tool(request.tool_id)
-    permission = permission_engine.check(tool, request.run_mode)
+    permission = permission_engine.check(
+        tool,
+        request.run_mode,
+        user_id=request.user_id,
+        workspace_id=request.workspace_id,
+        action=request.action,
+    )
     return PermissionCheckResponse(tool=tool, permission=permission)

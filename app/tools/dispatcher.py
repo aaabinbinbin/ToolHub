@@ -34,6 +34,10 @@ class ToolAdapterDispatcher:
         task_id: UUID | None = None,
         run_id: UUID | None = None,
         trace_id: UUID | None = None,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+        replay_of_tool_call_id: UUID | None = None,
+        replay_reason: str | None = None,
     ) -> ToolCallResult:
         """执行工具调用并写入 tool_calls。"""
         run_id = run_id or uuid4()
@@ -61,6 +65,11 @@ class ToolAdapterDispatcher:
                 run_id=run_id,
                 trace_id=trace_id,
                 task_id=task_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                artifacts=output.get("artifacts", []) if isinstance(output, dict) else [],
+                replay_of_tool_call_id=replay_of_tool_call_id,
+                replay_reason=replay_reason,
             )
         except ToolAdapterExecutionError as exc:
             result = ToolCallResult(
@@ -76,6 +85,13 @@ class ToolAdapterDispatcher:
                 run_id=run_id,
                 trace_id=trace_id,
                 task_id=task_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                artifacts=exc.output.get("artifacts", [])
+                if isinstance(exc.output, dict)
+                else [],
+                replay_of_tool_call_id=replay_of_tool_call_id,
+                replay_reason=replay_reason,
             )
         except Exception as exc:
             result = ToolCallResult(
@@ -90,6 +106,10 @@ class ToolAdapterDispatcher:
                 run_id=run_id,
                 trace_id=trace_id,
                 task_id=task_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                replay_of_tool_call_id=replay_of_tool_call_id,
+                replay_reason=replay_reason,
             )
 
         with get_connection() as connection:

@@ -20,6 +20,8 @@ class SandboxRunRequest:
     mem_limit: str | None = None # 内存限制
     network_disabled: bool = True # 是否可以联网
     pids_limit: int | None = None # 限制进程数
+    language: str | None = None
+    artifact_paths: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -35,4 +37,5 @@ class SandboxRunResult:
     container_id: str | None
     status: str
     error_message: str | None = None
-
+    language: str | None = None
+    artifacts: list[dict[str, str]] | None = None

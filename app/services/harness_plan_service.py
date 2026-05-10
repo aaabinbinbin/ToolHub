@@ -64,7 +64,12 @@ class HarnessPlanService:
         permission: PermissionDecision | None = None
         # 检查当前运行模式是否支持运行该工具
         if route.selected_tool is not None:
-            permission = self.permission_engine.check(route.selected_tool, request.run_mode)
+            permission = self.permission_engine.check(
+                route.selected_tool,
+                request.run_mode,
+                user_id=getattr(request, "user_id", None),
+                workspace_id=getattr(request, "workspace_id", None),
+            )
 
         status = self._status_from_permission(permission)
         # 记录本次工具路由和权限判断事件
@@ -94,6 +99,8 @@ class HarnessPlanService:
                 user_input=request.user_input,
                 run_mode=request.run_mode,
                 priority=request.priority,
+                user_id=request.user_id,
+                workspace_id=request.workspace_id,
             )
 
     def _record_events_and_update_task(

@@ -4,9 +4,23 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.permission import RunMode
+
+
+class TaskRunConfig(BaseModel):
+    """任务级运行控制参数，限制 Agent loop 的执行边界。"""
+
+    max_steps: int = Field(default=3, ge=1, le=20)
+    max_retries: int = Field(default=1, ge=0, le=5)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=3600)
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def normalize_timeout(cls, value: int | None) -> int | None:
+        """空值表示不启用任务级超时。"""
+        return value
 
 
 class TaskSubmitRequest(BaseModel):
@@ -15,6 +29,9 @@ class TaskSubmitRequest(BaseModel):
     user_input: str = Field(min_length=1)
     run_mode: RunMode = RunMode.SAFE_EXECUTE
     priority: str = "default"
+    user_id: str = "local-user"
+    workspace_id: str = "default"
+    run_config: TaskRunConfig = Field(default_factory=TaskRunConfig)
 
 
 class TaskResponse(BaseModel):
@@ -28,7 +45,13 @@ class TaskResponse(BaseModel):
     user_input: str
     run_mode: RunMode
     selected_tool_id: UUID | None
+    user_id: str
+    workspace_id: str
     priority: str
+    run_config: dict[str, Any]
+    cancel_requested: bool = False
+    cancel_reason: str | None = None
+    cancelled_at: datetime | None = None
     status: str
     current_step: str | None
     retry_count: int
@@ -50,6 +73,22 @@ class TaskSubmitResponse(BaseModel):
     status: str
 
 
+class TaskCancelRequest(BaseModel):
+    """取消任务的请求。"""
+
+    reason: str | None = None
+    requested_by: str = "local-user"
+
+
+class TaskCancelResponse(BaseModel):
+    """取消任务后的状态响应。"""
+
+    task_id: UUID
+    status: str
+    cancel_requested: bool
+    cancel_reason: str | None
+
+
 class TaskEventResponse(BaseModel):
     """任务事件响应。"""
 
@@ -64,4 +103,3 @@ class TaskEventResponse(BaseModel):
     message: str | None
     payload: dict[str, Any] | None
     created_at: datetime
-

@@ -13,7 +13,6 @@ class HTTPPolicy:
     """
 
     BLOCKED_HEADER_NAMES = {
-        "authorization",        # 防止携带认证令牌
         "cookie",               # 防止会话劫持
         "host",                 # 防止 Host 头注入
         "proxy-authorization",  # 防止代理认证
@@ -59,7 +58,11 @@ class HTTPPolicy:
             self._validate_ip(ip_address)
 
     def sanitize_request_headers(self, headers: dict[str, object]) -> dict[str, str]:
-        """过滤危险请求头，避免伪造 Host、携带 Cookie 或把密钥写入审计表。"""
+        """过滤危险请求头。
+
+        Authorization / x-api-key 等认证头允许存在，因为真实 HTTP 工具需要调用
+        第三方 API；密钥解析和审计脱敏由 SecretReferenceResolver / PayloadRedactor 负责。
+        """
         safe_headers: dict[str, str] = {}
         for name, value in headers.items():
             normalized = name.lower()

@@ -1,6 +1,6 @@
 # ToolHub 数据库表设计说明
 
-本文档说明 ToolHub 当前 PostgreSQL 数据库中的基础表结构。表结构以 `app/repositories/db.py` 中的 `SCHEMA_SQL` 为准。
+本文档说明 ToolHub 当前 PostgreSQL 数据库中的基础表结构。表结构以 Alembic migration 为准，当前初始版本位于 `migrations/versions/20260509_0001_initial_schema.py`，治理字段扩展位于 `migrations/versions/20260509_0002_governance_and_redaction.py`，工具版本与运行时元数据扩展位于 `migrations/versions/20260509_0003_tool_versions.py`，任务运行控制与 replay 字段位于 `migrations/versions/20260509_0004_runtime_controls.py`。
 
 ## 总体说明
 
@@ -15,6 +15,7 @@ ToolHub 的数据库主要用于保存 Agent Harness 执行链路中的核心数
 - 工具健康检查：`tool_health_checks`
 - 工具权限策略：`tool_permissions`
 - 人工审批请求：`approval_requests`
+- 工具版本快照：`tool_versions`
 
 当前数据库使用 PostgreSQL，核心原因是项目需要大量保存 JSONB 类型的半结构化数据，例如工具输入输出、LLM 响应、事件 payload、权限条件等。
 
@@ -94,6 +95,10 @@ tasks
 | `run_mode` | `TEXT` | Not Null, Check, Default `SAFE_EXECUTE` | 运行模式，只允许 `PLAN_ONLY`、`SAFE_EXECUTE`、`FULL_EXECUTE` |
 | `selected_tool_id` | `UUID` | Nullable | ToolRouter 最终选择的工具 ID |
 | `priority` | `TEXT` | Not Null, Default `default` | 任务优先级，例如 `high_priority`、`default`、`low_priority` |
+| `run_config` | `JSONB` | Not Null, Default `{}` | 任务级运行控制，例如 `max_steps`、`max_retries`、`timeout_seconds` |
+| `cancel_requested` | `BOOLEAN` | Not Null, Default `false` | 是否已收到取消请求 |
+| `cancel_reason` | `TEXT` | Nullable | 取消任务的原因 |
+| `cancelled_at` | `TIMESTAMPTZ` | Nullable | 任务取消时间 |
 | `status` | `TEXT` | Not Null | 任务状态 |
 | `current_step` | `TEXT` | Nullable | 当前执行步骤，例如 `understand_intent`、`select_tool` |
 | `retry_count` | `INTEGER` | Not Null, Default `0` | 当前重试次数 |
@@ -205,6 +210,8 @@ TASK_CANCELLED
 | `status` | `TEXT` | Not Null | 调用状态，例如 `SUCCESS`、`FAILED` |
 | `error_message` | `TEXT` | Nullable | 调用失败时的错误信息 |
 | `duration_ms` | `INTEGER` | Nullable | 调用耗时，单位毫秒 |
+| `replay_of_tool_call_id` | `UUID` | Nullable, FK `tool_calls(id)` | 如果本次调用来自 replay，记录源 tool_call |
+| `replay_reason` | `TEXT` | Nullable | replay 原因或调试说明 |
 | `created_at` | `TIMESTAMPTZ` | Not Null, Default `now()` | 创建时间 |
 
 ### 索引

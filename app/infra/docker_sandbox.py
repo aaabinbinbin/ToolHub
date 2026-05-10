@@ -86,6 +86,8 @@ class DockerSandbox:
                 container_id=container.id,
                 status=status,
                 error_message="沙箱执行超时" if status == "TIMEOUT" else None,
+                language=request.language,
+                artifacts=self._artifact_metadata(request.artifact_paths),
             )
         except ImageNotFound as exc:
             # 处理镜像不存在的情况
@@ -131,4 +133,13 @@ class DockerSandbox:
             container_id=None,
             status="FAILED",
             error_message=error_message,
+            language=request.language,
+            artifacts=[],
         )
+
+    def _artifact_metadata(self, artifact_paths: list[str] | None) -> list[dict[str, str]]:
+        """记录请求方声明的 artifact 路径。
+
+        当前先保存 artifact 引用元数据；后续可以扩展为从容器中复制文件内容或上传对象存储。
+        """
+        return [{"path": path, "status": "DECLARED"} for path in artifact_paths or []]

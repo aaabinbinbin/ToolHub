@@ -18,6 +18,17 @@ class ToolCallRequest(BaseModel):
     task_id: UUID | None = None
     run_id: UUID | None = None
     trace_id: UUID | None = None
+    user_id: str | None = None
+    workspace_id: str | None = None
+
+
+class ToolCallReplayRequest(BaseModel):
+    """重放某次工具调用的请求。"""
+
+    override_input: dict[str, Any] | None = None
+    reason: str | None = None
+    user_id: str | None = None
+    workspace_id: str | None = None
 
 
 class ToolCallResult(BaseModel):
@@ -35,3 +46,8 @@ class ToolCallResult(BaseModel):
     run_id: UUID
     trace_id: UUID
     task_id: UUID | None = None
+    user_id: str | None = None
+    workspace_id: str | None = None
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    replay_of_tool_call_id: UUID | None = None
+    replay_reason: str | None = None

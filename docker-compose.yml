@@ -20,8 +20,94 @@ services:
     ports:
       - "6379:6379"
     command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     volumes:
       - redis-data:/data
+
+  api:
+    build: .
+    environment:
+      APP_ENV: dev
+      HOST: 0.0.0.0
+      PORT: 8000
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/toolhub
+      REDIS_URL: redis://redis:6379/0
+      LLM_MOCK_ENABLED: "true"
+      LLM_PROVIDER: openai_compatible
+      LLM_BASE_URL: https://api.example.com/v1
+      LLM_API_KEY: your_api_key
+      LLM_MODEL: your-model-name
+      CLI_POLICY_PATH: config/cli_policy.json
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: >
+      sh -c "python scripts/init_db.py &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build: .
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/toolhub
+      REDIS_URL: redis://redis:6379/0
+      LLM_MOCK_ENABLED: "true"
+      LLM_PROVIDER: openai_compatible
+      LLM_BASE_URL: https://api.example.com/v1
+      LLM_API_KEY: your_api_key
+      LLM_MODEL: your-model-name
+      CLI_POLICY_PATH: config/cli_policy.json
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: >
+      celery -A app.workers.celery_app worker
+      --pool=solo --loglevel=INFO --concurrency=1
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping --timeout=5 >/tmp/celery-health.txt 2>&1"]
+      interval: 20s
+      timeout: 10s
+      retries: 6
+
+  dashboard:
+    build: .
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/toolhub
+      REDIS_URL: redis://redis:6379/0
+      LLM_MOCK_ENABLED: "true"
+      CLI_POLICY_PATH: config/cli_policy.json
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    command: >
+      streamlit run dashboard/streamlit_app.py
+      --server.address=0.0.0.0
+      --server.port=8501
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8501/_stcore/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres-data:

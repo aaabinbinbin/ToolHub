@@ -41,6 +41,9 @@ class CLICommandRule:
     risk_level: str
     image: str
     argv_template: list[str] # 命令的固定部分（如 ["git", "diff"]）。
+    category: str | None = None
+    owner: str | None = None
+    workspace_id: str | None = None
     params: dict[str, CLIParamRule] = field(default_factory=dict)
     workdir: str = "/workspace"
     mount_workspace: bool = True
@@ -73,9 +76,12 @@ class CLICommandPolicy:
     SHELL_TOKENS = {";", "&&", "||", "|", "`", "$(", ">", "<", "\n", "\r"}
 
     def __init__(self, config_path: str | Path | None = None) -> None:
-        # 先加载内置安全规则，再用配置文件覆盖或扩展，保证配置缺失时仍可运行。
-        self.config_path = Path(config_path or get_settings().cli_policy_path)
+        # 加载顺序：内置兜底 -> rule pack 目录 -> local override 文件。
+        settings = get_settings()
+        self.config_path = Path(config_path or settings.cli_policy_path)
+        self.config_dir = Path(settings.cli_policy_dir)
         self.rules = self._default_rules()
+        self.rules.update(self._load_config_rule_pack(self.config_dir))
         self.rules.update(self._load_config_rules(self.config_path))
 
     def build_plan(
@@ -212,6 +218,18 @@ class CLICommandPolicy:
             rules[rule.id] = rule
         return rules
 
+    def _load_config_rule_pack(self, path: Path) -> dict[str, CLICommandRule]:
+        """从目录中加载 CLI rule pack。"""
+        if not path.exists():
+            return {}
+        if not path.is_dir():
+            raise ValueError(f"CLI policy pack path must be a directory: {path}")
+
+        rules: dict[str, CLICommandRule] = {}
+        for file_path in sorted(path.glob("*.json")):
+            rules.update(self._load_config_rules(file_path))
+        return rules
+
     def _rule_from_mapping(self, value: Any) -> CLICommandRule:
         """把配置文件中的 dict 转换为 CLICommandRule。"""
         if not isinstance(value, dict):
@@ -234,6 +252,9 @@ class CLICommandPolicy:
             risk_level=self._required_text(value, "risk_level"),
             image=self._required_text(value, "image"),
             argv_template=argv_template,
+            category=value.get("category"),
+            owner=value.get("owner"),
+            workspace_id=value.get("workspace_id"),
             params=params,
             workdir=str(value.get("workdir", "/workspace")),
             mount_workspace=bool(value.get("mount_workspace", True)),

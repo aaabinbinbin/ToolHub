@@ -9,6 +9,7 @@ import httpx
 
 from app.common.config import get_settings
 from app.schemas.tool import ToolResponse
+from app.security.secret_manager import secret_resolver
 from app.security.http_policy import HTTPPolicy
 from app.tools.adapters.base import BaseToolAdapter
 
@@ -54,7 +55,11 @@ class HTTPToolAdapter(BaseToolAdapter):
             raise ValueError(f"HTTP adapter does not support method: {method}")
 
         # 构建 URL 并校验
-        url = self._build_url(endpoint, tool_input.get("params") or {})
+        url = self._build_url(
+            endpoint,
+            tool_input.get("params") or {},
+            tool_input.get("path_params") or {},
+        )
         # 构建并过滤请求头
         headers = self._build_headers(tool_input.get("headers") or {})
         # 计算超时时间
@@ -62,7 +67,7 @@ class HTTPToolAdapter(BaseToolAdapter):
             float(tool_input.get("timeout", self.settings.http_timeout_seconds)),
             self.settings.http_timeout_seconds,
         )
-        body = tool_input.get("json")
+        body = secret_resolver.resolve(tool_input.get("json"))
         # 解析重试配置，得到最大重试次数
         retry_options = tool_input.get("retry") or {}
         max_retries = self._resolve_max_retries(method, retry_options)
@@ -79,7 +84,14 @@ class HTTPToolAdapter(BaseToolAdapter):
         )
         return self._format_response(response)
 
-    def _build_url(self, endpoint: str, params: dict[str, Any]) -> str:
+    def _build_url(
+        self,
+        endpoint: str,
+        params: dict[str, Any],
+        path_params: dict[str, Any] | None = None,
+    ) -> str:
+        for name, value in (path_params or {}).items():
+            endpoint = endpoint.replace("{" + str(name) + "}", str(value))
         self.policy.validate_url(endpoint) # SSRF 防护
         if not params:
             return endpoint
@@ -87,7 +99,7 @@ class HTTPToolAdapter(BaseToolAdapter):
 
     def _build_headers(self, user_headers: dict[str, Any]) -> dict[str, str]:
         # Content-Type 由适配器设置，用户不能通过 Host/Cookie 等危险头影响请求。
-        headers = {"Content-Type": "application/json", **user_headers}
+        headers = {"Content-Type": "application/json", **secret_resolver.resolve(user_headers)}
         return self.policy.sanitize_request_headers(headers) # 过滤危险头
 
     def _resolve_max_retries(self, method: str, retry_options: dict[str, Any]) -> int:

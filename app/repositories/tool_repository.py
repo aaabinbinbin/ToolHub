@@ -9,6 +9,7 @@ from psycopg.types.json import Jsonb
 
 from app.common.exceptions import ConflictError
 from app.schemas.tool import ToolRegisterRequest
+from app.security.secret_manager import redactor
 
 # 选择 psycopg 的原因
 # 1.PostgreSQL 驱动：支持同步/异步 API
@@ -30,12 +31,14 @@ class ToolRepository:
                 """
                 INSERT INTO tools (
                     id, name, description, tool_type, endpoint, mcp_url, transport,
-                    version, input_schema, output_schema, tags, risk_level
+                    version, input_schema, output_schema, metadata, owner_id,
+                    workspace_id, tags, risk_level
                 )
                 VALUES (
                     %(id)s, %(name)s, %(description)s, %(tool_type)s, %(endpoint)s,
                     %(mcp_url)s, %(transport)s, %(version)s, %(input_schema)s,
-                    %(output_schema)s, %(tags)s, %(risk_level)s
+                    %(output_schema)s, %(metadata)s, %(owner_id)s, %(workspace_id)s,
+                    %(tags)s, %(risk_level)s
                 )
                 RETURNING *
                 """,
@@ -56,6 +59,9 @@ class ToolRepository:
                     "output_schema": Jsonb(request.output_schema)
                     if request.output_schema is not None
                     else None,
+                    "metadata": Jsonb(redactor.redact(request.metadata)),
+                    "owner_id": request.owner_id,
+                    "workspace_id": request.workspace_id,
                     "tags": Jsonb(request.tags),
                     "risk_level": request.risk_level.value,
                 },

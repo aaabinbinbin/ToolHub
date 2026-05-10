@@ -30,4 +30,9 @@ def select_tool(
         intent=request.intent,
         suggested_tool_type=request.suggested_tool_type,
         tool_input=request.tool_input,
+        top_k=request.top_k,
+        enable_llm_rerank=request.enable_llm_rerank,
+        task_id=request.task_id,
+        run_id=request.run_id,
+        trace_id=request.trace_id,
     )

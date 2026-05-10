@@ -285,18 +285,14 @@ class LLMClient:
             duration_ms=result.duration_ms,
             status=result.status,
             error_message=result.error_message,
+            workspace_id="default",
         )
         with get_connection() as connection:
             LLMCallRepository(connection).create(record)
 
     def _should_use_mock_response(self) -> bool:
         """判断是否启用 mock 模式。"""
-        settings = get_settings()
-        return (
-            not settings.llm_api_key
-            or settings.llm_api_key == "your_api_key"
-            or "api.example.com" in settings.llm_base_url
-        )
+        return get_settings().llm_mock_enabled
 
     def _mock_complete(
         self,
@@ -344,6 +340,10 @@ class LLMClient:
 
     def _mock_intent_response(self, prompt: str) -> str:
         """根据 prompt 关键词生成 mock 意图识别结果。"""
+        if '"ranked_tool_ids"' in prompt and '"candidates"' in prompt:
+            return self._mock_rerank_response(prompt)
+        if '"retry_count"' in prompt and '"current_step"' in prompt and '"observation"' in prompt:
+            return self._mock_replan_response(prompt)
         if '"output_schema"' in prompt and '"planning_rules"' in prompt:
             return self._mock_plan_response(prompt)
         if "final_answer" in prompt and "summary_type" in prompt:
@@ -526,6 +526,59 @@ class LLMClient:
             {
                 "steps": steps[:3],
                 "reason": "mock planner 根据用户输入和可用工具摘要生成稳定计划。",
+            },
+            ensure_ascii=False,
+        )
+
+    def _mock_replan_response(self, prompt: str) -> str:
+        """根据失败 observation 生成稳定的 mock 修正结果。"""
+        try:
+            payload = json.loads(prompt)
+        except json.JSONDecodeError:
+            return json.dumps({"tool_input": {}, "reason": "mock fallback"}, ensure_ascii=False)
+
+        current_step = payload.get("current_step") or {}
+        tool_input = dict(current_step.get("tool_input") or {})
+        observation = payload.get("observation") or {}
+        error_text = json.dumps(observation, ensure_ascii=False).lower()
+        if tool_input.get("language") == "nodejs":
+            tool_input["language"] = "node"
+        if tool_input.get("language") == "python" and "code" not in tool_input:
+            tool_input["code"] = "print('ok')"
+        if "missing" in error_text and "args" not in tool_input:
+            tool_input["args"] = {}
+        return json.dumps(
+            {
+                "tool_input": tool_input,
+                "reason": "mock replanner 根据 observation 保守修正 tool_input。",
+            },
+            ensure_ascii=False,
+        )
+
+    def _mock_rerank_response(self, prompt: str) -> str:
+        """根据候选工具分数生成稳定的 mock rerank 结果。"""
+        try:
+            payload = json.loads(prompt)
+        except json.JSONDecodeError:
+            return json.dumps(
+                {"ranked_tool_ids": [], "reasons": {}, "reason": "mock rerank fallback"},
+                ensure_ascii=False,
+            )
+        candidates = payload.get("candidates") or []
+        valid_candidates = [
+            item for item in candidates
+            if isinstance(item, dict) and item.get("schema_match", True)
+        ]
+        valid_candidates.sort(key=lambda item: float(item.get("score") or 0), reverse=True)
+        ranked_ids = [str(item.get("tool_id")) for item in valid_candidates if item.get("tool_id")]
+        return json.dumps(
+            {
+                "ranked_tool_ids": ranked_ids,
+                "reasons": {
+                    tool_id: "mock rerank 按系统分数和 schema_match 排序。"
+                    for tool_id in ranked_ids
+                },
+                "reason": "mock rerank 保持确定性排序。",
             },
             ensure_ascii=False,
         )

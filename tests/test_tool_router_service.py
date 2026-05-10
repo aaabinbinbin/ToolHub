@@ -22,6 +22,9 @@ def make_tool(
     *,
     tool_type: ToolType = ToolType.CLI,
     input_schema: dict | None = None,
+    quality_score: float | None = None,
+    success_rate: float | None = None,
+    avg_duration_ms: int | None = None,
 ) -> ToolResponse:
     now = datetime.now(timezone.utc)
     return ToolResponse(
@@ -40,6 +43,9 @@ def make_tool(
         status=ToolStatus.ACTIVE,
         health_status=HealthStatus.UNKNOWN,
         last_checked_at=None,
+        quality_score=quality_score,
+        success_rate=success_rate,
+        avg_duration_ms=avg_duration_ms,
         created_at=now,
         updated_at=now,
     )
@@ -147,3 +153,86 @@ def test_router_prefers_schema_matching_candidate_over_higher_invalid_candidate(
     assert route.selected_tool.name == "calculator-basic"
     assert route.schema_match is True
     assert route.candidate_details[0].tool.name == "calculator-basic"
+
+
+def test_router_returns_top_k_candidate_score_breakdown() -> None:
+    service = ToolRouterService(
+        FakeToolRegistryService(
+            [
+                make_tool(
+                    "git-status-fast",
+                    "查看 git 工作区状态",
+                    ["git", "status"],
+                    quality_score=0.9,
+                    success_rate=1.0,
+                    avg_duration_ms=200,
+                ),
+                make_tool(
+                    "git-status-slow",
+                    "查看 git 工作区状态",
+                    ["git", "status"],
+                    quality_score=0.2,
+                    success_rate=0.5,
+                    avg_duration_ms=8000,
+                ),
+            ]
+        )
+    )
+
+    route = service.select_tool(
+        user_input="请查看 git status",
+        intent="CLI_EXECUTION",
+        suggested_tool_type="CLI",
+        top_k=2,
+    )
+
+    assert route.selected_tool is not None
+    assert route.selected_tool.name == "git-status-fast"
+    assert len(route.candidate_details) == 2
+    assert route.candidate_details[0].rank == 1
+    assert "quality" in route.candidate_details[0].score_breakdown
+    assert route.candidate_details[0].score > route.candidate_details[1].score
+
+
+class FakeRerankService:
+    def rerank(self, **kwargs):
+        from app.schemas.routing import ToolRouteRerankMetadata
+
+        candidates = kwargs["candidates"]
+        for candidate in candidates:
+            if candidate.tool.name == "git-status-second":
+                candidate.score += 20
+                candidate.score_breakdown["llm_rerank"] = 20
+                candidate.llm_rerank_rank = 1
+                candidate.llm_rerank_reason = "更符合用户措辞"
+        return ToolRouteRerankMetadata(
+            enabled=True,
+            applied=True,
+            fallback_used=False,
+            reason="fake rerank applied",
+        )
+
+
+def test_router_applies_llm_rerank_within_top_k_candidates() -> None:
+    service = ToolRouterService(
+        FakeToolRegistryService(
+            [
+                make_tool("git-status-first", "查看 git 工作区状态", ["git", "status"]),
+                make_tool("git-status-second", "查看 git 工作区状态", ["git", "status"]),
+            ]
+        ),
+        rerank_service=FakeRerankService(),
+    )
+
+    route = service.select_tool(
+        user_input="请查看 git status",
+        intent="CLI_EXECUTION",
+        suggested_tool_type="CLI",
+        top_k=2,
+        enable_llm_rerank=True,
+    )
+
+    assert route.selected_tool is not None
+    assert route.selected_tool.name == "git-status-second"
+    assert route.rerank.applied is True
+    assert route.candidate_details[0].llm_rerank_rank == 1

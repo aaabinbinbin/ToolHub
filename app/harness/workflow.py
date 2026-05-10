@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
 from uuid import UUID
 
@@ -10,6 +11,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.common.config import get_settings
 from app.context.instruction_loader import InstructionLoader
+from app.harness.replanner import HarnessReplanner
 from app.harness.step_planner import HarnessStepPlanner
 from app.harness.tool_input_normalizer import ToolInputNormalizer
 from app.llm.intent_service import IntentService
@@ -18,9 +20,9 @@ from app.repositories.db import get_connection
 from app.repositories.task_event_repository import TaskEventRepository
 from app.repositories.task_repository import TaskRepository
 from app.schemas.permission import RunMode
-from app.services.approval_service import ApprovalService
 from app.schemas.tool import ToolResponse
 from app.security.permission_engine import PermissionEngine
+from app.services.approval_service import ApprovalService
 from app.services.tool_router_service import ToolRouterService
 from app.tools.dispatcher import ToolAdapterDispatcher
 
@@ -28,81 +30,84 @@ from app.tools.dispatcher import ToolAdapterDispatcher
 class HarnessState(TypedDict, total=False):
     """LangGraph 中流转的 Harness 状态。"""
 
-    task_id: str                        # 任务的唯一标识
-    run_id: str                         # 单次运行的标识（同一任务可能多次运行）
-    trace_id: str                       # 分布式追踪ID，用于日志关联
-    user_input: str                     # 用户原始输入文本
-    run_mode: str                       # 运行模式（如 "auto", "manual"）
-    instructions_ref: str               # 项目规则引用，避免完整内容进入 checkpoint
-    instructions_hash: str              # 项目规则内容哈希
-    instructions_length: int            # 项目规则长度
-    intent: dict[str, Any]              # LLM 识别的结构化意图
-    route: dict[str, Any]               # 工具路由决策结果
-    permission: dict[str, Any] | None   # 权限检查结果
-    tool_input: dict[str, Any]          # 传递给工具的参数
-    tool_result: dict[str, Any] | None  # 工具执行结果
-    plan: dict[str, Any]                # 多步执行计划
-    steps: list[dict[str, Any]]         # 计划中的步骤列表
-    current_step_index: int             # 当前执行步骤下标
-    max_steps: int                      # 单次任务最多执行步骤数
-    observations: list[dict[str, Any]]  # 每步执行后的观察结果
-    stop_reason: str | None             # 多步循环停止原因
-    summary: dict[str, Any]             # LLM 生成的最终用户答案
-    final_status: str                   # 最终状态（SUCCESS/FAILED/DENIED等）
-    error_message: str | None           #  错误信息
+    task_id: str
+    run_id: str
+    trace_id: str
+    user_input: str
+    run_mode: str
+    user_id: str
+    workspace_id: str
+    instructions_ref: str
+    instructions_hash: str
+    instructions_length: int
+    intent: dict[str, Any]
+    route: dict[str, Any]
+    permission: dict[str, Any] | None
+    tool_input: dict[str, Any]
+    tool_result: dict[str, Any] | None
+    plan: dict[str, Any]
+    steps: list[dict[str, Any]]
+    current_step_index: int
+    max_steps: int
+    max_retries: int
+    timeout_seconds: int | None
+    deadline_at: str | None
+    observations: list[dict[str, Any]]
+    stop_reason: str | None
+    summary: dict[str, Any]
+    final_status: str
+    error_message: str | None
 
 
 class AgentHarnessWorkflow:
-    """ Agent Harness 工作流。
-
-    当前实现一条线性 LangGraph 链路：
-    load_instructions -> understand_intent -> select_tool -> check_permission -> execute_tool -> summarize_result。
-    后面 会继续补 多步 Agent loop。
-    """
+    """Agent Harness 工作流：规划、路由、权限、执行、观察、重试和总结。"""
 
     def __init__(self) -> None:
-        self.instruction_loader = InstructionLoader() # 加载项目规则（TOOLHUB.md）
-        self.intent_service = IntentService() # 理解用户意图
-        self.tool_router_service = ToolRouterService() # 选择合适的工具
-        self.permission_engine = PermissionEngine() # 权限检查
-        self.approval_service = ApprovalService() # 人工审批请求
-        self.dispatcher = ToolAdapterDispatcher() # 分发并执行工具
-        self.tool_input_normalizer = ToolInputNormalizer() # 归一化 LLM 生成的工具参数
-        self.step_planner = HarnessStepPlanner() # 生成多步执行计划
-        self.result_summarizer = ResultSummarizerService() # 总结工具结果并生成最终答案
+        self.instruction_loader = InstructionLoader()
+        self.intent_service = IntentService()
+        self.tool_router_service = ToolRouterService()
+        self.permission_engine = PermissionEngine()
+        self.approval_service = ApprovalService()
+        self.dispatcher = ToolAdapterDispatcher()
+        self.tool_input_normalizer = ToolInputNormalizer()
+        self.step_planner = HarnessStepPlanner()
+        self.replanner = HarnessReplanner()
+        self.result_summarizer = ResultSummarizerService()
 
     def run(self, task: dict[str, Any]) -> HarnessState:
         """用 PostgresSaver checkpoint 执行一次 LangGraph workflow。"""
+        run_config = self._run_config(task)
+        timeout_seconds = run_config.get("timeout_seconds")
+        deadline_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
+        ).isoformat() if timeout_seconds else None
         initial_state: HarnessState = {
             "task_id": str(task["id"]),
             "run_id": str(task["run_id"]),
             "trace_id": str(task["trace_id"]),
             "user_input": task["user_input"],
             "run_mode": task["run_mode"],
-            "final_status": "RUNNING", # 初始状态设为运行中
+            "user_id": task.get("user_id", "local-user"),
+            "workspace_id": task.get("workspace_id", "default"),
+            "final_status": "RUNNING",
             "current_step_index": 0,
-            "max_steps": HarnessStepPlanner.DEFAULT_MAX_STEPS,
+            "max_steps": run_config["max_steps"],
+            "max_retries": run_config["max_retries"],
+            "timeout_seconds": timeout_seconds,
+            "deadline_at": deadline_at,
             "observations": [],
             "stop_reason": None,
         }
-        # LangGraph 使用 thread_id 作为状态存储的键
-        # 同一个 run_id 的多次调用会共享状态历史
-        # 支持时间旅行调试：可以查看任意时刻的状态快照
         config = {"configurable": {"thread_id": str(task["run_id"])}}
 
-        # 创建连接: 从配置获取数据库URL，创建 PostgreSQL 连接
         with PostgresSaver.from_conn_string(get_settings().database_url) as checkpointer:
-            # 初始化表结构: setup() 创建 checkpoint 所需的表（如果不存在）
             checkpointer.setup()
-            # 编译图: 将 StateGraph 编译为可执行的 Runnable
             graph = self._build_graph().compile(checkpointer=checkpointer)
-            # 调用执行: invoke() 触发整个工作流，返回最终状态
             return graph.invoke(initial_state, config=config)
 
     def _build_graph(self) -> StateGraph:
-        """图的构建"""
+        """构建 LangGraph 节点和边。"""
         graph = StateGraph(HarnessState)
-        # 添加节点
         graph.add_node("load_instructions", self._wrap_node("load_instructions", self._load_instructions))
         graph.add_node("understand_intent", self._wrap_node("understand_intent", self._understand_intent))
         graph.add_node("make_plan", self._wrap_node("make_plan", self._make_plan))
@@ -113,17 +118,13 @@ class AgentHarnessWorkflow:
         graph.add_node("decide_next_step", self._wrap_node("decide_next_step", self._decide_next_step))
         graph.add_node("summarize_result", self._wrap_node("summarize_result", self._summarize_result))
 
-        # 边的连接
         graph.add_edge(START, "load_instructions")
         graph.add_edge("load_instructions", "understand_intent")
         graph.add_edge("understand_intent", "make_plan")
         graph.add_conditional_edges(
             "make_plan",
             self._next_after_plan,
-            {
-                "execute": "select_tool",
-                "summarize": "summarize_result",
-            },
+            {"execute": "select_tool", "summarize": "summarize_result"},
         )
         graph.add_edge("select_tool", "check_permission")
         graph.add_edge("check_permission", "execute_tool")
@@ -132,19 +133,13 @@ class AgentHarnessWorkflow:
         graph.add_conditional_edges(
             "decide_next_step",
             self._next_after_decision,
-            {
-                "continue": "select_tool",
-                "summarize": "summarize_result",
-            },
+            {"continue": "select_tool", "summarize": "summarize_result"},
         )
         graph.add_edge("summarize_result", END)
         return graph
 
     def _load_instructions(self, state: HarnessState) -> dict[str, Any]:
-        """项目规则读取节点
-        为后续 LLM 调用提供系统提示（System Prompt）
-        确保 AI 遵循项目规范和约束
-        """
+        """加载项目规则，给后续 LLM 节点提供约束上下文。"""
         instructions = self.instruction_loader.load()
         instructions_hash = hashlib.sha256(instructions.encode("utf-8")).hexdigest()
         self._record_event(
@@ -165,7 +160,7 @@ class AgentHarnessWorkflow:
         }
 
     def _understand_intent(self, state: HarnessState) -> dict[str, Any]:
-        """意图理解节点"""
+        """理解用户意图。"""
         intent = self.intent_service.understand_intent(
             state["user_input"],
             run_mode=state["run_mode"],
@@ -186,7 +181,7 @@ class AgentHarnessWorkflow:
     def _make_plan(self, state: HarnessState) -> dict[str, Any]:
         """生成本次任务的多步执行计划。"""
         intent = state.get("intent") or {}
-        max_steps = state.get("max_steps", HarnessStepPlanner.DEFAULT_MAX_STEPS)
+        max_steps = int(state.get("max_steps", HarnessStepPlanner.DEFAULT_MAX_STEPS))
         steps = self.step_planner.create_steps(
             user_input=state["user_input"],
             intent=intent,
@@ -199,6 +194,8 @@ class AgentHarnessWorkflow:
         plan = {
             "steps": steps,
             "max_steps": max_steps,
+            "max_retries": state.get("max_retries", 0),
+            "timeout_seconds": state.get("timeout_seconds"),
             "planner": self.step_planner.last_planner,
             "fallback_used": self.step_planner.last_fallback_used,
             "warnings": self.step_planner.last_warnings,
@@ -217,7 +214,7 @@ class AgentHarnessWorkflow:
             payload=plan,
         )
         first_step = steps[0] if steps else {}
-        output = {
+        output: dict[str, Any] = {
             "plan": plan,
             "steps": steps,
             "current_step_index": 0,
@@ -229,19 +226,24 @@ class AgentHarnessWorkflow:
         return output
 
     def _select_tool(self, state: HarnessState) -> dict[str, Any]:
-        """工具选择节点"""
+        """为当前步骤选择工具。"""
+        if terminal := self._terminal_guard(state, "select_tool"):
+            return terminal
+
         intent = state.get("intent") or {}
         current_step = self._current_step(state)
         route = self.tool_router_service.select_tool(
             user_input=current_step.get("objective") or state["user_input"],
             intent=current_step.get("intent") or intent.get("intent"),
-            suggested_tool_type=current_step.get("suggested_tool_type")
-            or intent.get("suggested_tool_type"),
+            suggested_tool_type=current_step.get("suggested_tool_type") or intent.get("suggested_tool_type"),
             tool_input=current_step.get("tool_input") or state.get("tool_input") or {},
+            enable_llm_rerank=True,
+            task_id=UUID(state["task_id"]),
+            run_id=UUID(state["run_id"]),
+            trace_id=UUID(state["trace_id"]),
         )
         payload = route.model_dump(mode="json")
         selected_tool_id = route.selected_tool.id if route.selected_tool else None
-        # selected_tool_id 是任务的重要属性，需要在主表中标记
         with get_connection() as connection:
             TaskRepository(connection).update_status(
                 task_id=UUID(state["task_id"]),
@@ -249,7 +251,6 @@ class AgentHarnessWorkflow:
                 current_step="select_tool",
                 selected_tool_id=selected_tool_id,
             )
-        # _record_event 只记录事件，不更新任务主表
         self._record_event(
             state,
             event_type="TOOL_SELECTED" if route.selected_tool else "TOOL_ROUTING_FAILED",
@@ -267,7 +268,10 @@ class AgentHarnessWorkflow:
         }
 
     def _check_permission(self, state: HarnessState) -> dict[str, Any]:
-        """权限校验节点"""
+        """检查当前工具调用是否允许执行。"""
+        if terminal := self._terminal_guard(state, "check_permission"):
+            return terminal
+
         selected_tool = self._selected_tool_from_state(state)
         if selected_tool is None:
             self._record_event(
@@ -281,6 +285,8 @@ class AgentHarnessWorkflow:
         permission = self.permission_engine.check(
             selected_tool,
             RunMode(state["run_mode"]),
+            user_id=state.get("user_id"),
+            workspace_id=state.get("workspace_id"),
         )
         payload = permission.model_dump(mode="json")
         permission_event_type = (
@@ -295,10 +301,7 @@ class AgentHarnessWorkflow:
             event_type=permission_event_type,
             step="check_permission",
             message=permission.reason,
-            payload={
-                "step_index": state.get("current_step_index", 0),
-                "permission": payload,
-            },
+            payload={"step_index": state.get("current_step_index", 0), "permission": payload},
         )
         if permission.decision.value == "ASK":
             approval = self.approval_service.create_or_get_pending(
@@ -308,6 +311,8 @@ class AgentHarnessWorkflow:
                 tool_id=selected_tool.id,
                 requested_action=f"execute:{selected_tool.name}",
                 reason=permission.reason,
+                requested_by=state.get("user_id", "harness"),
+                workspace_id=state.get("workspace_id", "default"),
             )
             return {
                 "permission": {
@@ -323,7 +328,10 @@ class AgentHarnessWorkflow:
         }
 
     def _execute_tool(self, state: HarnessState) -> dict[str, Any]:
-        """工具执行节点"""
+        """执行当前步骤选择出的工具。"""
+        if terminal := self._terminal_guard(state, "execute_tool"):
+            return terminal
+
         selected_tool = self._selected_tool_from_state(state)
         permission = state.get("permission")
         if selected_tool is None:
@@ -347,18 +355,18 @@ class AgentHarnessWorkflow:
             )
             return {"tool_result": None, "final_status": "DENIED"}
 
-        # 把 LLM 生成的 tool_input 归一化为各类 Adapter 可接受的结构。
         tool_input = self.tool_input_normalizer.normalize(
             tool=selected_tool,
             tool_input=state.get("tool_input") or {},
         )
-        # 选择工具并执行
         result = self.dispatcher.dispatch(
             tool=selected_tool,
             tool_input=tool_input,
             task_id=UUID(state["task_id"]),
             run_id=UUID(state["run_id"]),
             trace_id=UUID(state["trace_id"]),
+            user_id=state.get("user_id"),
+            workspace_id=state.get("workspace_id"),
         )
         payload = result.model_dump(mode="json")
         self._record_event(
@@ -366,10 +374,7 @@ class AgentHarnessWorkflow:
             event_type="TOOL_EXECUTED" if result.success else "TOOL_EXECUTION_FAILED",
             step="execute_tool",
             message="工具执行完成。" if result.success else result.error_message,
-            payload={
-                "step_index": state.get("current_step_index", 0),
-                "tool_call": payload,
-            },
+            payload={"step_index": state.get("current_step_index", 0), "tool_call": payload},
         )
         return {
             "tool_input": tool_input,
@@ -379,7 +384,7 @@ class AgentHarnessWorkflow:
         }
 
     def _observe_result(self, state: HarnessState) -> dict[str, Any]:
-        """记录当前步骤的 observation，供后续步骤和最终总结使用。"""
+        """记录当前步骤 observation，供下一步和最终总结使用。"""
         observations = list(state.get("observations") or [])
         steps = list(state.get("steps") or [])
         step_index = int(state.get("current_step_index", 0))
@@ -411,18 +416,20 @@ class AgentHarnessWorkflow:
             message=f"已记录第 {step_index + 1} 步观察结果：{final_status}。",
             payload=observation,
         )
-        return {
-            "observations": observations,
-            "steps": steps,
-        }
+        return {"observations": observations, "steps": steps}
 
     def _decide_next_step(self, state: HarnessState) -> dict[str, Any]:
-        """根据当前状态决定继续下一步还是进入总结。"""
-        steps = state.get("steps") or []
+        """根据 observation 决定重试、继续下一步或总结。"""
+        if terminal := self._terminal_guard(state, "decide_next_step"):
+            return terminal
+
+        steps = list(state.get("steps") or [])
         current_index = int(state.get("current_step_index", 0))
         final_status = state.get("final_status", "FAILED")
 
         if final_status != "SUCCESS":
+            if self._can_retry(state, final_status):
+                return self._retry_current_step(state, steps, current_index)
             stop_reason = f"第 {current_index + 1} 步状态为 {final_status}，停止后续执行。"
             self._record_event(
                 state,
@@ -463,11 +470,7 @@ class AgentHarnessWorkflow:
             event_type="NEXT_STEP_DECIDED",
             step="decide_next_step",
             message=message,
-            payload={
-                "next_action": "continue",
-                "next_step_index": next_index,
-                "next_step": next_step,
-            },
+            payload={"next_action": "continue", "next_step_index": next_index, "next_step": next_step},
         )
         return {
             "current_step_index": next_index,
@@ -481,7 +484,7 @@ class AgentHarnessWorkflow:
         }
 
     def _summarize_result(self, state: HarnessState) -> dict[str, Any]:
-        """结果总结节点，把结构化执行结果转换为用户可读 final_answer。"""
+        """把结构化执行结果总结成用户可读答案。"""
         tool_result = self._summary_tool_result(state)
         summary = self.result_summarizer.summarize(
             user_input=state["user_input"],
@@ -533,10 +536,7 @@ class AgentHarnessWorkflow:
                 return {
                     "success": True,
                     "status": "PLANNED",
-                    "output": {
-                        "steps": state.get("steps") or [],
-                        "stop_reason": state.get("stop_reason"),
-                    },
+                    "output": {"steps": state.get("steps") or [], "stop_reason": state.get("stop_reason")},
                     "error_message": None,
                 }
             return state.get("tool_result")
@@ -552,12 +552,128 @@ class AgentHarnessWorkflow:
         }
 
     def _selected_tool_from_state(self, state: HarnessState) -> ToolResponse | None:
-        """从嵌套的路由数据中提取工具对象"""
+        """从路由结果中提取工具对象。"""
         route = state.get("route") or {}
         selected_tool = route.get("selected_tool")
         if not selected_tool:
             return None
         return ToolResponse.model_validate(selected_tool)
+
+    def _can_retry(self, state: HarnessState, final_status: str) -> bool:
+        """判断当前失败是否允许自动重试。"""
+        if final_status not in {"FAILED"}:
+            return False
+        current_step = self._current_step(state)
+        retry_count = int(current_step.get("retry_count", 0))
+        return retry_count < int(state.get("max_retries", 0))
+
+    def _retry_current_step(
+        self,
+        state: HarnessState,
+        steps: list[dict[str, Any]],
+        current_index: int,
+    ) -> dict[str, Any]:
+        """基于最近 observation 修正当前步骤输入，并重新进入路由和权限链路。"""
+        current_step = dict(self._current_step(state))
+        retry_count = int(current_step.get("retry_count", 0)) + 1
+        latest_observation = (state.get("observations") or [{}])[-1]
+        replanned_step = self.replanner.replan_step(
+            user_input=state["user_input"],
+            current_step=current_step,
+            observation=latest_observation,
+            retry_count=retry_count,
+            max_retries=int(state.get("max_retries", 0)),
+            task_id=UUID(state["task_id"]),
+            run_id=UUID(state["run_id"]),
+            trace_id=UUID(state["trace_id"]),
+        )
+        replanned_step = {
+            **replanned_step,
+            "retry_count": retry_count,
+            "status": "RETRYING",
+        }
+        if 0 <= current_index < len(steps):
+            steps[current_index] = replanned_step
+
+        with get_connection() as connection:
+            TaskRepository(connection).increment_retry_count(UUID(state["task_id"]))
+
+        self._record_event(
+            state,
+            event_type="STEP_RETRY_PLANNED",
+            step="decide_next_step",
+            message=f"第 {current_index + 1} 步失败后准备第 {retry_count} 次重试。",
+            payload={
+                "step_index": current_index,
+                "retry_count": retry_count,
+                "max_retries": state.get("max_retries"),
+                "replanner_fallback_used": self.replanner.last_fallback_used,
+                "replan_reason": self.replanner.last_reason,
+                "replanned_step": replanned_step,
+            },
+        )
+        return {
+            "steps": steps,
+            "tool_input": replanned_step.get("tool_input") or {},
+            "route": {},
+            "permission": None,
+            "tool_result": None,
+            "error_message": None,
+            "final_status": "RUNNING",
+            "stop_reason": None,
+        }
+
+    def _run_config(self, task: dict[str, Any]) -> dict[str, Any]:
+        """读取任务级运行参数，兼容旧任务记录。"""
+        raw_config = dict(task.get("run_config") or {})
+        return {
+            "max_steps": int(raw_config.get("max_steps") or HarnessStepPlanner.DEFAULT_MAX_STEPS),
+            "max_retries": int(raw_config.get("max_retries") if raw_config.get("max_retries") is not None else task.get("max_retries", 1)),
+            "timeout_seconds": raw_config.get("timeout_seconds"),
+        }
+
+    def _terminal_guard(self, state: HarnessState, step: str) -> dict[str, Any] | None:
+        """在节点边界检查取消和超时，避免继续进入工具执行。"""
+        if state.get("final_status") in {"CANCELLED", "TIMEOUT"}:
+            return {"final_status": state["final_status"], "stop_reason": state.get("stop_reason")}
+        if self._is_timed_out(state):
+            stop_reason = "任务已超过 run_config.timeout_seconds 限制。"
+            self._record_event(
+                state,
+                event_type="TASK_TIMEOUT",
+                step=step,
+                message=stop_reason,
+                payload={"deadline_at": state.get("deadline_at")},
+            )
+            return {"final_status": "TIMEOUT", "stop_reason": stop_reason, "error_message": stop_reason}
+        if self._is_cancel_requested(state):
+            stop_reason = "任务已收到取消请求。"
+            self._record_event(
+                state,
+                event_type="TASK_CANCELLED",
+                step=step,
+                message=stop_reason,
+                payload={"step": step},
+            )
+            return {"final_status": "CANCELLED", "stop_reason": stop_reason, "error_message": stop_reason}
+        return None
+
+    def _is_timed_out(self, state: HarnessState) -> bool:
+        """检查任务级 deadline 是否已经到达。"""
+        deadline_at = state.get("deadline_at")
+        if not deadline_at:
+            return False
+        try:
+            deadline = datetime.fromisoformat(deadline_at)
+        except ValueError:
+            return False
+        return datetime.now(timezone.utc) >= deadline
+
+    def _is_cancel_requested(self, state: HarnessState) -> bool:
+        """从数据库读取取消标记，确保外部 API 能打断后续节点。"""
+        with get_connection() as connection:
+            task = TaskRepository(connection).get_by_id(UUID(state["task_id"]))
+        return bool(task and task.get("cancel_requested"))
 
     def _record_event(
         self,
@@ -568,7 +684,7 @@ class AgentHarnessWorkflow:
         message: str,
         payload: dict[str, Any] | None = None,
     ) -> None:
-        """更新task表"""
+        """记录任务事件，同时把主任务 current_step 更新到当前节点。"""
         with get_connection() as connection:
             TaskRepository(connection).update_status(
                 task_id=UUID(state["task_id"]),
@@ -583,6 +699,8 @@ class AgentHarnessWorkflow:
                 step=step,
                 message=message,
                 payload=payload,
+                user_id=state.get("user_id"),
+                workspace_id=state.get("workspace_id"),
             )
 
     def _wrap_node(
@@ -606,7 +724,7 @@ class AgentHarnessWorkflow:
         step: str,
         exc: Exception,
     ) -> None:
-        """记录节点失败，便于 Dashboard 精确展示失败位置。"""
+        """记录节点失败，便于 Dashboard 定位失败位置。"""
         error_message = f"{exc.__class__.__name__}: {exc}"
         with get_connection() as connection:
             TaskRepository(connection).update_status(
@@ -623,4 +741,6 @@ class AgentHarnessWorkflow:
                 step=step,
                 message=error_message,
                 payload={"node": step, "error_type": exc.__class__.__name__},
+                user_id=state.get("user_id"),
+                workspace_id=state.get("workspace_id"),
             )

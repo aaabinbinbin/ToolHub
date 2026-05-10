@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from celery import Celery
 
-from app.common.config import get_settings
+from app.common.config import get_settings, validate_settings
 
 
+validate_settings()
 settings = get_settings()
 
 celery_app = Celery(
@@ -21,4 +22,3 @@ celery_app.conf.update(
     timezone="Asia/Shanghai",
     enable_utc=False,
 )
-

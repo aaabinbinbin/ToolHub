@@ -10,6 +10,7 @@ from app.repositories.task_repository import TaskRepository
 from app.schemas.approval import (
     ApprovalDecisionResponse,
     ApprovalRequestResponse,
+    ApprovalScope,
     ApprovalStatus,
 )
 from app.schemas.permission import RunMode
@@ -27,10 +28,14 @@ class ApprovalService:
         tool_id: UUID | None,
         requested_action: str,
         reason: str,
+        requested_by: str = "harness",
+        workspace_id: str = "default",
+        approval_scope: ApprovalScope = ApprovalScope.TASK,
     ) -> ApprovalRequestResponse:
         """创建待审批请求；如果同一任务已有待审批请求则复用。"""
         with get_connection() as connection:
             repository = ApprovalRepository(connection)
+            repository.expire_pending()
             existing = repository.get_pending_by_task_id(task_id)
             if existing is not None:
                 return ApprovalRequestResponse.model_validate(existing)
@@ -41,7 +46,9 @@ class ApprovalService:
                 tool_id=tool_id,
                 requested_action=requested_action,
                 reason=reason,
-                requested_by="harness",
+                requested_by=requested_by,
+                workspace_id=workspace_id,
+                approval_scope=approval_scope,
             )
             TaskEventRepository(connection).create(
                 task_id=task_id,
@@ -54,13 +61,20 @@ class ApprovalService:
                     "approval_id": str(approval["id"]),
                     "tool_id": str(tool_id) if tool_id else None,
                     "requested_action": requested_action,
+                    "workspace_id": workspace_id,
+                    "approval_scope": approval["approval_scope"],
+                    "expires_at": approval["expires_at"].isoformat()
+                    if approval.get("expires_at")
+                    else None,
                 },
             )
         return ApprovalRequestResponse.model_validate(approval)
 
     def list_pending(self) -> list[ApprovalRequestResponse]:
         with get_connection() as connection:
-            approvals = ApprovalRepository(connection).list_pending()
+            repository = ApprovalRepository(connection)
+            repository.expire_pending()
+            approvals = repository.list_pending()
         return [ApprovalRequestResponse.model_validate(item) for item in approvals]
 
     def approve(
@@ -69,6 +83,8 @@ class ApprovalService:
         *,
         decided_by: str,
         decision_reason: str | None,
+        approval_scope: ApprovalScope = ApprovalScope.TASK,
+        approved_until=None,
     ) -> ApprovalDecisionResponse:
         """审批通过：任务切换到 FULL_EXECUTE 并重新进入队列。"""
         with get_connection() as connection:
@@ -79,6 +95,8 @@ class ApprovalService:
                 status=ApprovalStatus.APPROVED,
                 decided_by=decided_by,
                 decision_reason=decision_reason,
+                approval_scope=approval_scope,
+                approved_until=approved_until,
             )
             if approval is None:
                 self._raise_missing_or_decided(connection, approval_id)
@@ -103,6 +121,10 @@ class ApprovalService:
                     "approval_id": str(approval_id),
                     "decided_by": decided_by,
                     "next_run_mode": RunMode.FULL_EXECUTE.value,
+                    "approval_scope": approval["approval_scope"],
+                    "approved_until": approval["approved_until"].isoformat()
+                    if approval.get("approved_until")
+                    else None,
                 },
             )
 

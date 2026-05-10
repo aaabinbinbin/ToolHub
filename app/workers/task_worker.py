@@ -24,11 +24,22 @@ def run_agent_task(task_id: str) -> dict:
     task_uuid = UUID(task_id)
     with get_connection() as connection:
         task_repository = TaskRepository(connection)
-        # 验证任务存在性,防止执行不存在的数据
         task = task_repository.get_by_id(task_uuid)
         if task is None:
             raise ValueError(f"Task not found: {task_id}")
-        # 更新任务状态为 RUNNING
+        if task.get("cancel_requested") or task.get("status") == "CANCELLED":
+            TaskEventRepository(connection).create(
+                task_id=task_uuid,
+                run_id=task["run_id"],
+                trace_id=task["trace_id"],
+                event_type="TASK_CANCELLED",
+                step="task_worker",
+                message="任务启动前已经被取消，worker 不再执行 Harness。",
+                user_id=task.get("user_id"),
+                workspace_id=task.get("workspace_id"),
+            )
+            return {"task_id": task_id, "status": "CANCELLED"}
+
         task_repository.update_status(
             task_id=task_uuid,
             status="RUNNING",
@@ -41,6 +52,8 @@ def run_agent_task(task_id: str) -> dict:
             event_type="TASK_STARTED",
             step="task_worker",
             message="Celery worker 已开始执行任务。",
+            user_id=task.get("user_id"),
+            workspace_id=task.get("workspace_id"),
         )
 
     try:
@@ -58,6 +71,11 @@ def run_agent_task(task_id: str) -> dict:
             "observations": final_state.get("observations"),
             "stop_reason": final_state.get("stop_reason"),
             "summary": final_state.get("summary"),
+            "run_config": {
+                "max_steps": final_state.get("max_steps"),
+                "max_retries": final_state.get("max_retries"),
+                "timeout_seconds": final_state.get("timeout_seconds"),
+            },
         }
         with get_connection() as connection:
             TaskRepository(connection).update_status(
@@ -81,6 +99,8 @@ def run_agent_task(task_id: str) -> dict:
                 else "completed",
                 message=f"任务结束，状态：{final_status}。",
                 payload=result,
+                user_id=task.get("user_id"),
+                workspace_id=task.get("workspace_id"),
             )
         return {"task_id": task_id, "status": final_status}
     except Exception as exc:
@@ -99,5 +119,7 @@ def run_agent_task(task_id: str) -> dict:
                 event_type="TASK_FAILED",
                 step="task_worker",
                 message=f"{exc.__class__.__name__}: {exc}",
+                user_id=task.get("user_id"),
+                workspace_id=task.get("workspace_id"),
             )
         raise

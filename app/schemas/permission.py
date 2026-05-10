@@ -38,6 +38,9 @@ class PermissionCheckRequest(BaseModel):
 
     tool_id: UUID
     run_mode: RunMode = RunMode.SAFE_EXECUTE
+    user_id: str | None = None
+    workspace_id: str | None = None
+    action: str = "execute"
 
 
 class PermissionDecision(BaseModel):
@@ -52,6 +55,8 @@ class PermissionDecision(BaseModel):
     run_mode: RunMode
     risk_level: RiskLevel
     required_mode: RunMode | None = None
+    policy_id: UUID | None = None
+    policy_name: str | None = None
 
 
 class PermissionCheckResponse(BaseModel):

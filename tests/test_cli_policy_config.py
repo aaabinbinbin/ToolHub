@@ -70,6 +70,43 @@ def test_cli_policy_loads_custom_json_rule(tmp_path) -> None:
     assert plan.argv == ["echo", "toolhub"]
 
 
+def test_cli_policy_loads_rule_pack_directory(tmp_path, monkeypatch) -> None:
+    pack_dir = tmp_path / "packs"
+    pack_dir.mkdir()
+    (pack_dir / "demo.json").write_text(
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "id": "cli://pack/echo",
+                        "description": "rule pack echo",
+                        "category": "demo",
+                        "owner": "toolhub",
+                        "workspace_id": "default",
+                        "effect": "ALLOW",
+                        "risk_level": "LOW",
+                        "image": "alpine:latest",
+                        "argv_template": ["echo"],
+                        "params": {},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLI_POLICY_DIR", str(pack_dir))
+    monkeypatch.setenv("CLI_POLICY_PATH", str(tmp_path / "missing.json"))
+    from app.common.config import get_settings
+
+    get_settings.cache_clear()
+    policy = CLICommandPolicy(config_path=tmp_path / "missing.json")
+
+    plan = policy.build_plan(endpoint="cli://pack/echo", tool_input={})
+
+    assert plan.argv == ["echo"]
+    assert plan.rule.category == "demo"
+
+
 def test_cli_policy_rejects_invalid_config(tmp_path) -> None:
     config_path = tmp_path / "cli_policy.json"
     config_path.write_text(json.dumps({"rules": [{"id": "broken"}]}), encoding="utf-8")

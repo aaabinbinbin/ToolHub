@@ -5,6 +5,7 @@ from uuid import UUID
 from app.common.exceptions import NotFoundError
 from app.repositories.db import get_connection
 from app.repositories.tool_repository import ToolRepository
+from app.repositories.tool_version_repository import ToolVersionRepository
 from app.schemas.tool import ToolRegisterRequest, ToolResponse
 
 
@@ -13,6 +14,7 @@ class ToolRegistryService:
     def register_tool(self, request: ToolRegisterRequest) -> ToolResponse:
         with get_connection() as connection:
             tool = ToolRepository(connection).create(request)
+            ToolVersionRepository(connection).create_snapshot(tool)
             return ToolResponse.model_validate(tool)
 
     def get_tool(self, tool_id: UUID) -> ToolResponse:

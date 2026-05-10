@@ -1,0 +1,6 @@
+{"user_input":"请查看 git status","intent":"CLI_EXECUTION","suggested_tool_type":"CLI","tool_input":{"rule_id":"cli://git/status-short","args":{}},"expected_tool_type":"CLI","expected_tool_name_contains":"git-status"}
+{"user_input":"请查看 git diff","intent":"CLI_EXECUTION","suggested_tool_type":"CLI","tool_input":{"rule_id":"cli://git/diff","args":{"path":".","staged":false}},"expected_tool_type":"CLI","expected_tool_name_contains":"git-diff"}
+{"user_input":"在沙箱中运行 Python print('ok')","intent":"RUN_CODE","suggested_tool_type":"SANDBOX","tool_input":{"language":"python","code":"print('ok')"},"expected_tool_type":"SANDBOX","expected_tool_name_contains":"sandbox"}
+{"user_input":"调用 HTTP echo 接口","intent":"HTTP_CALL","suggested_tool_type":"HTTP","tool_input":{"method":"GET","params":{"q":"hello"}},"expected_tool_type":"HTTP","expected_tool_name_contains":"http"}
+{"user_input":"计算 1 + 2","intent":"CALCULATE","suggested_tool_type":"MCP","tool_input":{"expression":"1 + 2"},"expected_tool_type":"MCP","expected_tool_name_contains":"calculator"}
+{"user_input":"帮我写一首诗","intent":"GENERAL_QUERY","suggested_tool_type":null,"tool_input":{},"expected_tool_type":null,"expected_tool_name_contains":null}

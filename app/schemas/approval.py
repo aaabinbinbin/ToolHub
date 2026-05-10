@@ -17,6 +17,15 @@ class ApprovalStatus(StrEnum):
     EXPIRED = "EXPIRED"
 
 
+class ApprovalScope(StrEnum):
+    """审批生效范围。"""
+
+    TASK = "TASK"
+    TOOL = "TOOL"
+    WORKSPACE = "WORKSPACE"
+    TIME_WINDOW = "TIME_WINDOW"
+
+
 class ApprovalRequestResponse(BaseModel):
     """审批请求响应。"""
 
@@ -27,13 +36,17 @@ class ApprovalRequestResponse(BaseModel):
     run_id: UUID
     trace_id: UUID
     tool_id: UUID | None
+    workspace_id: str
     requested_action: str
     reason: str
     status: ApprovalStatus
+    approval_scope: ApprovalScope
     requested_by: str | None
     decided_by: str | None
     decision_reason: str | None
     created_at: datetime
+    expires_at: datetime | None
+    approved_until: datetime | None
     decided_at: datetime | None
 
 
@@ -42,6 +55,8 @@ class ApprovalDecisionRequest(BaseModel):
 
     decided_by: str = "local-user"
     decision_reason: str | None = None
+    approval_scope: ApprovalScope = ApprovalScope.TASK
+    approved_until: datetime | None = None
 
 
 class ApprovalDecisionResponse(BaseModel):

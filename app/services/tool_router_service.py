@@ -34,6 +34,38 @@ class ToolRouterService:
         "执行",
     }
 
+    # 危险输入关键词 — 命中后直接返回 NO_TOOL，不进入候选打分。
+    DANGEROUS_PATTERNS = [
+        # 破坏性系统命令
+        "rm -rf",
+        "rm -r",
+        "format c:",
+        "format /",
+        "del /f",
+        "del /s",
+        "dd if=",
+        "mkfs.",
+        ":(){ :|:& };:",  # fork bomb
+        # 敏感文件访问
+        "/etc/shadow",
+        "/etc/passwd",
+        "/etc/sudoers",
+        ".env",
+        "id_rsa",
+        "authorized_keys",
+        # 路径穿越
+        "../",
+        "..\\",
+        # 云元数据
+        "169.254.169.254",
+        "metadata.google.internal",
+        # 恶意下载执行
+        "curl http://evil",
+        "wget http://evil",
+        "http://evil",
+        "https://evil",
+    ]
+
     MIN_SCORE_WITHOUT_INTENT = 2.0
 
     def __init__(
@@ -61,6 +93,18 @@ class ToolRouterService:
         trace_id: UUID | None = None,
     ) -> ToolRouteResult:
         """从 ACTIVE 工具中选择最合适的工具，并返回 top-k 候选解释。"""
+        # 危险输入门禁 —— 先于所有打分和路由逻辑，命中后直接返回 NO_TOOL。
+        danger_reason = self._check_dangerous(user_input, tool_input or {})
+        if danger_reason is not None:
+            return ToolRouteResult(
+                selected_tool=None,
+                score=0,
+                reason=danger_reason,
+                candidates=[],
+                candidate_details=[],
+                top_k=top_k,
+            )
+
         top_k = min(max(top_k, 1), 20)
         normalized_tool_input = tool_input or {}
         tools = self.tool_registry_service.search_tools("", include_disabled=False)
@@ -279,6 +323,18 @@ class ToolRouterService:
             "CALCULATE": "MCP",
         }
         return mapping.get((intent or "").upper())
+
+    def _check_dangerous(
+        self,
+        user_input: str,
+        tool_input: dict[str, Any],
+    ) -> str | None:
+        """检查用户输入是否包含危险操作模式，命中则返回拒绝原因。"""
+        combined = f"{user_input} {str(tool_input)}".lower()
+        for pattern in self.DANGEROUS_PATTERNS:
+            if pattern.lower() in combined:
+                return f"拒绝路由：用户输入包含危险操作模式（命中: {pattern}）"
+        return None
 
     def _tokens(self, text: str) -> set[str]:
         """把用户输入拆成用于匹配的 token。"""

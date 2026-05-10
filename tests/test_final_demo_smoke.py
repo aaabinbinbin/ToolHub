@@ -214,16 +214,19 @@ def test_smoke_permission_full_matrix() -> None:
 
 def test_smoke_task_submit_and_query() -> None:
     """冒烟：提交 PLAN_ONLY 任务后可查询其状态和事件。"""
-    init_db()
+    from unittest.mock import patch
 
+    init_db()
     service = TaskService()
-    response = service.submit_task(
-        TaskSubmitRequest(
-            user_input="请查看 git status",
-            run_mode=RunMode.PLAN_ONLY,
-            run_config=TaskRunConfig(max_steps=1, max_retries=0),
+
+    with patch("app.workers.task_worker.run_agent_task"):
+        response = service.submit_task(
+            TaskSubmitRequest(
+                user_input="请查看 git status",
+                run_mode=RunMode.PLAN_ONLY,
+                run_config=TaskRunConfig(max_steps=1, max_retries=0),
+            )
         )
-    )
 
     task = service.get_task(response.task_id)
     assert task.status in {"QUEUED", "RUNNING", "PLANNED", "SUCCESS"}, task.status
@@ -236,16 +239,19 @@ def test_smoke_task_submit_and_query() -> None:
 
 def test_smoke_trace_aggregation() -> None:
     """冒烟：提交任务后 trace API 可聚合到数据。"""
-    init_db()
+    from unittest.mock import patch
 
+    init_db()
     service = TaskService()
-    response = service.submit_task(
-        TaskSubmitRequest(
-            user_input="trace smoke test",
-            run_mode=RunMode.PLAN_ONLY,
-            run_config=TaskRunConfig(max_steps=1, max_retries=0),
+
+    with patch("app.workers.task_worker.run_agent_task"):
+        response = service.submit_task(
+            TaskSubmitRequest(
+                user_input="trace smoke test",
+                run_mode=RunMode.PLAN_ONLY,
+                run_config=TaskRunConfig(max_steps=1, max_retries=0),
+            )
         )
-    )
 
     trace = TraceService().get_trace(response.trace_id)
     assert trace.trace_id == response.trace_id

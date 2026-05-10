@@ -101,12 +101,15 @@ def test_approval_resume_e2e_high_risk_waits_then_approved() -> None:
     pending_list = ApprovalService().list_pending()
     assert any(str(a.id) == str(approval.id) for a in pending_list)
 
-    # 审批通过
-    decision = ApprovalService().approve(
-        approval_id=approval.id,
-        decided_by="e2e-tester",
-        decision_reason="E2E 测试：允许本次沙箱执行",
-    )
+    # 审批通过（mock Celery 避免依赖 Redis）
+    from unittest.mock import patch
+
+    with patch("app.workers.task_worker.run_agent_task"):
+        decision = ApprovalService().approve(
+            approval_id=approval.id,
+            decided_by="e2e-tester",
+            decision_reason="E2E 测试：允许本次沙箱执行",
+        )
 
     # 验证任务状态
     assert decision.task["status"] == "QUEUED"

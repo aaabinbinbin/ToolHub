@@ -37,7 +37,7 @@ ToolHub 是一个面向 CLI / IDE Agent 的 Agent Tool Runtime / Agent Harness M
 - Streamlit Dashboard Console：Overview / Trace / Task / Routing / Replay / Raw Tables
 - 审计表：tasks / task_events / tool_calls / llm_calls / sandbox_executions
 - Secret 入库前统一脱敏（PayloadRedactor）
-- 测试基线：117 passed
+- 测试基线：119 passed
 
 ### MVP 骨架能力（已具备主链路，但未完整打磨）
 
